@@ -40,8 +40,8 @@ des valeurs fictives et parsing XML. Aucun playbook ni test Windows exécuté.
 ## Candidate pour le premier essai VM
 
 Préparation demandée pour un test local ultérieur. Base provisoire : Windows 11
-Pro x64 français/AZERTY, mises à jour, Firefox, 7-Zip et Notepad++.
-Hyperviseur et build Windows à confirmer par l'utilisateur.
+Pro x64 français/AZERTY, mises à jour et huit applications confirmées (voir ci-dessous).
+Libvirt/KVM confirmé ; build Windows à préciser lors du test.
 
 - Procédure : `docs/PREMIER-ESSAI-VM.md`, installation manuelle puis
   personnalisation, snapshot, Sysprep et test OOBE sur un clone à froid.
@@ -66,9 +66,23 @@ le chemin recommandé pour ce premier essai.
 
 - Windows 11 Pro confirmé par l’utilisateur. Build et ISO non fournis.
 - L’utilisateur demande de préparer la création de la VM ; script local
-  `scripts/create_reference_vm.py` fourni pour libvirt/KVM, hyperviseur à confirmer.
-- L’utilisateur souhaite une autre liste d’applications : liste en attente ;
-  ne pas exécuter le playbook de personnalisation actuel avant adaptation.
+  `scripts/create_reference_vm.py` fourni pour libvirt/KVM, désormais confirmé.
+- Liste confirmée et intégrée : Firefox, Brave, Chrome, LibreOffice français,
+  PDFgear, AnyDesk, 7-Zip et Thunderbird. Notepad++ retiré de la liste.
 - Script testé en aperçu et pour le refus d’un disque existant. Cinq tests de
   régression passent, ainsi que le contrôle des 20 fichiers du projet.
 - Aucune VM créée dans le cloud, aucun démarrage Windows vérifié.
+
+## Applications intégrées à la candidate
+
+- Installation machine par la collection `chocolatey.chocolatey`, puis contrôle
+  des huit exécutables et création des raccourcis sur le bureau public.
+- LibreOffice : argument MSI `UI_LANGS=fr` ; interface à vérifier sur la VM.
+- Aucun compte mail, navigateur ou AnyDesk personnel configuré dans le master.
+- Catalogue Chocolatey inaccessible dans le cloud (403 du proxy) : disponibilité
+  des paquets et installation réelle à vérifier sur le PC/VM. Vérification TLS
+  et checksums conservée. Aucun paquet Windows téléchargé ou exécuté ici.
+- Six tests de régression et vérification statique des 20 fichiers réussis.
+- L'utilisateur a demandé si la VM pouvait être créée dans le cloud : ce cloud
+  sert à préparer les scripts et ne dispose pas de virt-install. La création
+  et le premier démarrage restent locaux ; aucune image Windows validée.

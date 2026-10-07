@@ -40,3 +40,31 @@ win_keyboard_layout: "040C:0000040C"  # AZERTY français
 
 # Chemin du fond d'écran personnalisé (sur la VM Windows)
 win_wallpaper_path: 'C:\Windows\Web\Wallpaper\Custom\wallpaper-entreprise.jpg'
+
+# Applications machine pour le master ; aucune configuration utilisateur intégrée.
+win_master_apps:
+- name: Firefox
+  package: firefox
+  executable: C:\Program Files\Mozilla Firefox\firefox.exe
+- name: Brave
+  package: brave
+  executable: C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe
+- name: Chrome
+  package: googlechrome
+  executable: C:\Program Files\Google\Chrome\Application\chrome.exe
+- name: LibreOffice
+  package: libreoffice-fresh
+  executable: C:\Program Files\LibreOffice\program\soffice.exe
+  install_args: UI_LANGS=fr
+- name: PDFgear
+  package: pdfgear
+  executable: C:\Program Files\PDFgear\PDFgear.exe
+- name: AnyDesk
+  package: anydesk
+  executable: C:\Program Files (x86)\AnyDesk\AnyDesk.exe
+- name: 7-Zip
+  package: 7zip
+  executable: C:\Program Files\7-Zip\7zFM.exe
+- name: Thunderbird
+  package: thunderbird
+  executable: C:\Program Files\Mozilla Thunderbird\thunderbird.exe

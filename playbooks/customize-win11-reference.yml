@@ -2,7 +2,7 @@
 # Usage: ansible-playbook -i inventory/hosts.yml playbooks/customize-win11-reference.yml --ask-vault-pass
 # Responsabilité : Personnalisation de l'image de référence Windows 11
 #   - Mises à jour Windows
-#   - Installation d'applications (Chocolatey : Firefox, 7-Zip, Notepad++)
+#   - Installation des huit applications définies dans win_master_apps
 #   - Fond d'écran personnalisé (Default User hive)
 #   - Raccourcis bureau public
 #   - Nettoyage bloatware et fichiers temporaires
@@ -45,53 +45,38 @@
     # 2. Bootstrap Chocolatey
     # -------------------------------------------------------------------------
 
-    - name: "Choco | Vérifier si Chocolatey est déjà installé"
+    - name: "Choco | Installer le gestionnaire de paquets"
+      chocolatey.chocolatey.win_chocolatey:
+        name: chocolatey
+        state: present
+
+    - name: "Apps | Installer les applications pour tous les utilisateurs"
+      chocolatey.chocolatey.win_chocolatey:
+        name: "{{ item.package }}"
+        state: present
+        install_args: "{{ item.install_args | default(omit) }}"
+        source: https://community.chocolatey.org/api/v2/
+        timeout: 2700
+      loop: "{{ win_master_apps }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: "Apps | Vérifier les exécutables après installation"
       ansible.windows.win_stat:
-        path: C:\ProgramData\chocolatey\bin\choco.exe
-      register: choco_stat
+        path: "{{ item.executable }}"
+      loop: "{{ win_master_apps }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: master_app_files
 
-    - name: "Choco | Installer Chocolatey"
-      ansible.windows.win_shell: |
-        Set-ExecutionPolicy Bypass -Scope Process -Force
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-      when: not choco_stat.stat.exists
-      changed_when: true
-
-    # -------------------------------------------------------------------------
-    # 3. Installation des applications via Chocolatey
-    # -------------------------------------------------------------------------
-
-    - name: "Apps | Vérifier Firefox"
-      ansible.windows.win_stat:
-        path: C:\Program Files\Mozilla Firefox\firefox.exe
-      register: firefox_stat
-
-    - name: "Apps | Installer Firefox"
-      ansible.windows.win_shell: choco install firefox -y --no-progress --limit-output
-      when: not firefox_stat.stat.exists
-      changed_when: true
-
-    - name: "Apps | Vérifier 7-Zip"
-      ansible.windows.win_stat:
-        path: C:\Program Files\7-Zip\7zFM.exe
-      register: sevenzip_stat
-
-    - name: "Apps | Installer 7-Zip"
-      ansible.windows.win_shell: choco install 7zip -y --no-progress --limit-output
-      when: not sevenzip_stat.stat.exists
-      changed_when: true
-
-    - name: "Apps | Vérifier Notepad++"
-      ansible.windows.win_stat:
-        path: C:\Program Files\Notepad++\notepad++.exe
-      register: npp_stat
-
-    - name: "Apps | Installer Notepad++"
-      ansible.windows.win_shell: choco install notepadplusplus -y --no-progress --limit-output
-      when: not npp_stat.stat.exists
-      changed_when: true
+    - name: "Apps | Arrêter si une application est absente"
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: "{{ item.item.name }} : exécutable absent à {{ item.item.executable }}. Vérifier l'installation et son chemin avant Sysprep."
+      loop: "{{ master_app_files.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
 
     # -------------------------------------------------------------------------
     # 4. Fond d'écran personnalisé
@@ -141,23 +126,14 @@
     # 5. Raccourcis bureau public
     # -------------------------------------------------------------------------
 
-    - name: "Shortcuts | Raccourci Firefox sur le bureau public"
+    - name: "Shortcuts | Créer les raccourcis sur le bureau public"
       community.windows.win_shortcut:
-        src: C:\Program Files\Mozilla Firefox\firefox.exe
-        dest: C:\Users\Public\Desktop\Firefox.lnk
+        src: "{{ item.executable }}"
+        dest: "C:\\Users\\Public\\Desktop\\{{ item.name }}.lnk"
         state: present
-
-    - name: "Shortcuts | Raccourci 7-Zip sur le bureau public"
-      community.windows.win_shortcut:
-        src: C:\Program Files\7-Zip\7zFM.exe
-        dest: C:\Users\Public\Desktop\7-Zip.lnk
-        state: present
-
-    - name: "Shortcuts | Raccourci Notepad++ sur le bureau public"
-      community.windows.win_shortcut:
-        src: C:\Program Files\Notepad++\notepad++.exe
-        dest: C:\Users\Public\Desktop\Notepad++.lnk
-        state: present
+      loop: "{{ win_master_apps }}"
+      loop_control:
+        label: "{{ item.name }}"
 
     # -------------------------------------------------------------------------
     # 6. Nettoyage — désactivation bloatware et fichiers temporaires
@@ -220,10 +196,9 @@
       ansible.builtin.debug:
         msg:
           - "Mises à jour Windows : {{ win_update_result.found_update_count }} installée(s)"
-          - "Firefox    : {{ 'installé' if not firefox_stat.stat.exists else 'déjà présent' }}"
-          - "7-Zip      : {{ 'installé' if not sevenzip_stat.stat.exists else 'déjà présent' }}"
-          - "Notepad++  : {{ 'installé' if not npp_stat.stat.exists else 'déjà présent' }}"
-          - "Fond d'écran : {{ win_wallpaper_path }}"
-          - "Raccourcis bureau public : Firefox, 7-Zip, Notepad++"
+          - "Applications vérifiées : {{ win_master_apps | map(attribute='name') | join(', ') }}"
+          - "LibreOffice : langue française demandée ; vérifier l'interface dans la VM"
+          - "Fond d'écran personnalisé : {{ win_custom_wallpaper_enabled | default(false) | bool }}"
+          - "Raccourcis bureau public créés pour les huit applications"
           - "Bloatware désactivé : Teams Chat, Widgets, Xbox, Clipchamp"
           - "Prochaine étape : ansible-playbook playbooks/sysprep-win11.yml"

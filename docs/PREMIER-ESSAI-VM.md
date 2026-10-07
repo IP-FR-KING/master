@@ -1,14 +1,14 @@
 # Premier essai du master Windows 11 sur VM locale
 
 Version candidate : vérifiée statiquement dans le cloud, à valider sur Windows.
-Windows 11 Pro confirmé, français/AZERTY. La nouvelle liste d’applications reste
-à préciser ; ne pas lancer la personnalisation actuelle avant son adaptation.
+Windows 11 Pro, français/AZERTY, sur libvirt/KVM confirmé. Applications : Firefox,
+Brave, Chrome, LibreOffice en français, PDFgear, AnyDesk, 7-Zip et Thunderbird.
 
 ## Création de la VM sur le PC Linux (libvirt/KVM)
 
 Le script `scripts/create_reference_vm.py` prépare Windows 11 Pro : 8 Go de RAM,
 2 vCPU, disque neuf de 80 Go, UEFI Secure Boot et TPM 2.0. Le cloud ne crée pas
-la VM. L’hyperviseur local reste à confirmer ; ces commandes sont pour Linux.
+la VM. Ces commandes sont prévues pour votre PC Linux libvirt/KVM.
 
 Installer les prérequis sur un PC Debian/Ubuntu avec virtualisation matérielle :
 
@@ -111,8 +111,20 @@ Administrateur. Ne pas mettre de secret dans ce fichier de variables.
 
 ## 3. Personnaliser et vérifier
 
-**En attente de la nouvelle liste d’applications.** Le playbook actuel installe
-encore Firefox, 7-Zip et Notepad++ ; attendre son adaptation avant de le lancer.
+Le playbook installe les huit applications via les paquets Chocolatey suivants :
+`firefox`, `brave`, `googlechrome`, `libreoffice-fresh`, `pdfgear`, `anydesk`,
+`7zip` et `thunderbird`. LibreOffice reçoit l'argument MSI `UI_LANGS=fr`.
+Les versions sont celles disponibles à la première installation ; noter les
+versions réellement installées pour le rapport de test. Une relance conserve
+les paquets déjà installés (`state: present`). Notepad++ n'est plus installé,
+mais une installation antérieure n'est pas automatiquement supprimée.
+
+La disponibilité du catalogue n'a pas pu être vérifiée depuis le cloud (accès
+refusé). Le PC et la VM doivent pouvoir joindre Chocolatey et les sites éditeurs.
+Une erreur de paquet, de téléchargement ou de checksum bloque l'installation ;
+ne pas désactiver les vérifications pour poursuivre. Les chemins attendus sont
+dans `inventory/group_vars/all/vars.yml` ; si un éditeur change son chemin,
+diagnostiquer avant d'adapter les variables locales.
 
 Les commandes suivantes s'exécutent uniquement sur le PC et ciblent `win11-ref`.
 
@@ -122,8 +134,16 @@ Les commandes suivantes s'exécutent uniquement sur le PC et ciblent `win11-ref`
 ```
 
 Vérifier dans la VM : Windows Update sans redémarrage en attente, lancement des
-trois applications, raccourcis sur le bureau public et Defender actif.
+huit applications, raccourcis sur le bureau public et Defender actif.
 Relancer la personnalisation si d'autres mises à jour restent nécessaires.
+Vérifier spécifiquement : interface française de LibreOffice, ouverture d'un
+PDF dans PDFgear, lancement des trois navigateurs, création d'un document et
+ouverture de Thunderbird sans configurer de compte personnel dans la référence.
+AnyDesk est installé sans mot de passe d'accès sans surveillance ni association
+à un compte. Ne pas ouvrir de session de téléassistance dans la référence.
+Vérifier que l'identifiant AnyDesk est propre à chaque clone ; s'il est dupliqué,
+arrêter la diffusion et appliquer la procédure de clonage de l'éditeur avant
+une capture finale. Sysprep seul ne garantit pas l'unicité des identifiants tiers.
 Noter la version avec `winver`. Prendre un snapshot `avant-sysprep`.
 
 ## 4. Généraliser puis tester une copie
@@ -143,7 +163,7 @@ Après l'arrêt, garder la référence éteinte. Faire un clone à froid avec di
 MAC et état UEFI/TPM propres via l'hyperviseur, puis démarrer uniquement ce clone.
 Le premier test est l'OOBE sur cette copie ; FOG et PXE viennent ensuite.
 Vérifier le nouveau nom de machine, le compte `MasterAdmin`, français/AZERTY,
-les trois applications et un redémarrage normal. Vérifier que le compte Ansible
+les huit applications et un redémarrage normal. Vérifier que le compte Ansible
 hérité est supprimé ou désactivé avant tout usage hors lab ; cette candidate
 ne réalise pas automatiquement cette suppression.
 

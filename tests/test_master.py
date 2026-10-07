@@ -26,6 +26,26 @@ class MasterTests(unittest.TestCase):
                     self.assertEqual(len(values), 2)
                     self.assertTrue(all(v.text == password for v in values))
 
+    def test_requested_apps_are_installed_and_checked(self):
+        variables = yaml.safe_load((ROOT / 'inventory/group_vars/all/vars.yml').read_text())
+        apps = variables['win_master_apps']
+        self.assertEqual({a['package'] for a in apps},
+                         {'firefox', 'brave', 'googlechrome', 'libreoffice-fresh',
+                          'pdfgear', 'anydesk', '7zip', 'thunderbird'})
+        self.assertEqual(len(apps), 8)
+        libreoffice = next(a for a in apps if a['name'] == 'LibreOffice')
+        self.assertEqual(libreoffice['install_args'], 'UI_LANGS=fr')
+        tasks = yaml.safe_load((ROOT / 'playbooks/customize-win11-reference.yml').read_text())[0]['tasks']
+        install = next(t for t in tasks if t.get('chocolatey.chocolatey.win_chocolatey', {}).get('name') == '{{ item.package }}')
+        self.assertEqual(install['loop'], '{{ win_master_apps }}')
+        self.assertNotIn('ignore_errors', install)
+        checks = next(t for t in tasks if t.get('register') == 'master_app_files')
+        self.assertEqual(checks['loop'], '{{ win_master_apps }}')
+        assertion = next(t for t in tasks if t.get('loop') == '{{ master_app_files.results }}')
+        self.assertIn('item.stat.exists', assertion['ansible.builtin.assert']['that'])
+        collections = yaml.safe_load((ROOT / 'collections/requirements.yml').read_text())
+        self.assertIn({'name': 'chocolatey.chocolatey'}, collections['collections'])
+
     def test_sysprep_preserves_windows_components_and_logs(self):
         play = yaml.safe_load((ROOT / 'playbooks/sysprep-win11.yml').read_text())[0]
         tasks = play['tasks']
