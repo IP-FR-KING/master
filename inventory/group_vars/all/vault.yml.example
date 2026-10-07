@@ -1,0 +1,8 @@
+---
+# À renseigner uniquement sur le contrôleur local, puis chiffrer avec ansible-vault.
+vault_fog_user: "CHANGE_ME"
+vault_fog_password: "CHANGE_ME"
+vault_fog_mysql_password: "CHANGE_ME"
+vault_winrm_user: "CHANGE_ME"
+vault_winrm_password: "CHANGE_ME"
+vault_win_local_password: "CHANGE_ME"

@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  autounattend.xml — Réponses automatiques pour l'INSTALLATION de Windows 11
+  Usage : placé à la racine d'un ISO attaché à la VM win11-ref au démarrage
+  Rôle  : installe Windows sans intervention, crée le compte WinRM, active WinRM
+
+  NE PAS CONFONDRE avec unattend.xml (qui gère l'OOBE après déploiement FOG).
+
+  Ce fichier installe Windows sur win11-ref avec :
+    - Bypass TPM / Secure Boot / RAM (lab VM sans TPM)
+    - Partitionnement UEFI automatique (EFI 300Mo + MSR 128Mo + Windows reste)
+    - Edition : Windows 11 Pro (clé générique KMS lab)
+    - Locale française + clavier AZERTY
+    - Compte {{ vault_winrm_user }} / mot de passe vault créé automatiquement
+    - IP statique {{ win_reference_ip }} après installation (pas de DHCP requis)
+    - WinRM HTTP activé sur le port 5985 (Ansible)
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <!-- ==========================================================
+       Pass windowsPE : bypass TPM, partitionnement, installation
+       ========================================================== -->
+  <settings pass="windowsPE">
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <!-- Bypass TPM / Secure Boot / RAM — requis pour VM sans TPM -->
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+
+      <!-- Acceptation EULA et clé de produit (générique KMS — lab uniquement) -->
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <ProductKey>
+          <!-- Clé générique Windows 11 Pro KMS (publique Microsoft, lab uniquement) -->
+          <Key>W269N-WFGWX-YVC9B-4J6C9-T83GX</Key>
+          <WillShowUI>Never</WillShowUI>
+        </ProductKey>
+      </UserData>
+
+      <!-- Partitionnement UEFI : EFI + MSR + Windows (reste du disque) -->
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>300</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>128</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Format>FAT32</Format>
+              <Label>System</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <!-- Installation de l'image Windows (édition Pro sélectionnée par nom) -->
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>Windows 11 Pro</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <WillShowUI>Never</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+    </component>
+
+    <!-- Locale pendant l'installation -->
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>{{ win_locale }}</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>{{ win_keyboard_layout }}</InputLocale>
+      <SystemLocale>{{ win_locale }}</SystemLocale>
+      <UILanguage>{{ win_locale }}</UILanguage>
+      <UserLocale>{{ win_locale }}</UserLocale>
+    </component>
+
+  </settings>
+
+  <!-- ==========================================================
+       Pass specialize : locale système, fuseau horaire
+       ========================================================== -->
+  <settings pass="specialize">
+
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>{{ win_keyboard_layout }}</InputLocale>
+      <SystemLocale>{{ win_locale }}</SystemLocale>
+      <UILanguage>{{ win_locale }}</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>{{ win_locale }}</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <ComputerName>win11-ref</ComputerName>
+      <TimeZone>{{ win_timezone }}</TimeZone>
+    </component>
+
+  </settings>
+
+  <!-- ==========================================================
+       Pass oobeSystem : bypass OOBE + compte WinRM + IP statique
+       ========================================================== -->
+  <settings pass="oobeSystem">
+
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>{{ win_keyboard_layout }}</InputLocale>
+      <SystemLocale>{{ win_locale }}</SystemLocale>
+      <UILanguage>{{ win_locale }}</UILanguage>
+      <UserLocale>{{ win_locale }}</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <TimeZone>{{ win_timezone }}</TimeZone>
+
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+
+      <!-- Compte WinRM pour Ansible — vault_winrm_user / vault_winrm_password -->
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Password>
+              <Value>{{ vault_winrm_password }}</Value>
+              <PlainText>true</PlainText>
+            </Password>
+            <Description>Compte WinRM Ansible</Description>
+            <DisplayName>{{ vault_winrm_user }}</DisplayName>
+            <Group>Administrators</Group>
+            <Name>{{ vault_winrm_user }}</Name>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+
+      <!-- Connexion automatique unique pour exécuter les FirstLogonCommands -->
+      <AutoLogon>
+        <Password>
+          <Value>{{ vault_winrm_password }}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Username>{{ vault_winrm_user }}</Username>
+      </AutoLogon>
+
+      <!-- Configuration WinRM + IP statique exécutée au premier démarrage -->
+      <FirstLogonCommands>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <!-- IP statique pour accès WinRM stable depuis Ansible -->
+          <CommandLine>powershell -Command "$a = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Select-Object -First 1; New-NetIPAddress -InterfaceAlias $a.Name -IPAddress {{ win_reference_ip }} -PrefixLength 24 -DefaultGateway {{ dhcp_gateway }} -ErrorAction SilentlyContinue; Set-DnsClientServerAddress -InterfaceAlias $a.Name -ServerAddresses {{ dhcp_gateway }} -ErrorAction SilentlyContinue"</CommandLine>
+          <Description>Configurer IP statique {{ win_reference_ip }}</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>cmd /c winrm quickconfig -q</CommandLine>
+          <Description>Activer WinRM</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <CommandLine>cmd /c winrm set winrm/config/service/auth @{Basic="true"}</CommandLine>
+          <Description>Activer authentification Basic WinRM</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <CommandLine>cmd /c winrm set winrm/config/service @{AllowUnencrypted="true"}</CommandLine>
+          <Description>Autoriser WinRM non chiffré (lab uniquement)</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <CommandLine>netsh advfirewall firewall add rule name="WinRM HTTP 5985" dir=in action=allow protocol=TCP localport=5985</CommandLine>
+          <Description>Ouvrir port 5985 dans le pare-feu</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>6</Order>
+          <CommandLine>powershell -Command "Set-ExecutionPolicy RemoteSigned -Scope LocalMachine -Force"</CommandLine>
+          <Description>Autoriser les scripts PowerShell signés (Ansible)</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+      </FirstLogonCommands>
+
+    </component>
+
+  </settings>
+
+</unattend>

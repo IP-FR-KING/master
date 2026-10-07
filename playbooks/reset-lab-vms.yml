@@ -1,0 +1,305 @@
+---
+# Usage: ansible-playbook playbooks/reset-lab-vms.yml
+# ⚠️  DESTRUCTIF — Réinitialise complètement les VMs Windows 11 du lab libvirt
+#
+# Ce playbook :
+#   1. Arrête et supprime les VMs existantes (win11, win11-client, client-pxe)
+#   2. Archive les anciens disques (.qcow2 → .qcow2.old)
+#   3. Crée des disques vierges pour win11-ref et win11-pxe
+#   4. Génère l'ISO autounattend.xml pour l'installation Windows automatisée
+#   5. Définit la VM win11-ref (boot cdrom → installation Windows auto)
+#   6. Définit la VM win11-pxe (boot PXE → déploiement FOG)
+#
+# Nommage uniforme :
+#   win11-ref  → VM image de référence (source pour capture FOG)
+#   win11-pxe  → VM client de test déploiement PXE
+#
+# Prérequis : ansible-galaxy collection install community.libvirt
+
+- name: Reset and recreate Windows 11 lab VMs
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  vars:
+    libvirt_images: /var/lib/libvirt/images
+    libvirt_nvram:  /var/lib/libvirt/qemu/nvram
+
+    win_iso:              "{{ libvirt_images }}/Win11_25H2_French_x64.iso"
+    autounattend_iso:     "{{ libvirt_images }}/win11-autounattend.iso"
+    autounattend_staging: /tmp/win11-autounattend
+
+    # win11-ref : image source Windows 11 (4 vCPU / 4GB pour install confortable)
+    ref_vm_name:     win11-ref
+    ref_vm_disk:     "{{ libvirt_images }}/win11-ref.qcow2"
+    ref_vm_disk_gb:  60
+    ref_vm_ram_mb:   4096
+    ref_vm_vcpus:    4
+
+    # win11-pxe : client de test déploiement FOG (2 vCPU / 4GB)
+    pxe_vm_name:     win11-pxe
+    pxe_vm_disk:     "{{ libvirt_images }}/win11-pxe.qcow2"
+    pxe_vm_disk_gb:  60
+    pxe_vm_ram_mb:   4096
+    pxe_vm_vcpus:    2
+
+    # Anciennes VMs à nettoyer
+    old_vms:
+      - win11
+      - win11-client
+      - client-pxe
+
+    lab_network: fog-pxe
+    nic_model:   e1000e
+
+    ovmf_loader_candidates:
+      - /usr/share/OVMF/OVMF_CODE_4M.fd
+      - /usr/share/OVMF/OVMF_CODE.fd
+      - /usr/share/edk2/x64/OVMF_CODE.fd
+    ovmf_nvram_candidates:
+      - /usr/share/OVMF/OVMF_VARS_4M.fd
+      - /usr/share/OVMF/OVMF_VARS.fd
+      - /usr/share/edk2/x64/OVMF_VARS.fd
+
+  tasks:
+
+    # =========================================================
+    # 0. Avertissement
+    # =========================================================
+    - name: "⚠️  AVERTISSEMENT — Actions destructives imminentes"
+      ansible.builtin.debug:
+        msg:
+          - "VMs qui vont être SUPPRIMÉES : {{ old_vms }}"
+          - "Disques archivés (*.qcow2 → *.qcow2.old, NON supprimés) :"
+          - "  win11.qcow2, win11-client.qcow2, client-pxe.qcow2"
+          - "VMs qui vont être CRÉÉES : {{ ref_vm_name }}, {{ pxe_vm_name }}"
+          - "Nommage : win11-ref (source image) | win11-pxe (client PXE)"
+
+    # =========================================================
+    # 1. Dépendances
+    # =========================================================
+    - name: "Deps | Installer genisoimage"
+      ansible.builtin.apt:
+        name: genisoimage
+        state: present
+        update_cache: false
+
+    - name: "Deps | Vérifier que l'ISO Windows existe"
+      ansible.builtin.stat:
+        path: "{{ win_iso }}"
+      register: win_iso_stat
+
+    - name: "Deps | Échouer si l'ISO Windows est absent"
+      ansible.builtin.fail:
+        msg: "ISO Windows introuvable : {{ win_iso }}"
+      when: not win_iso_stat.stat.exists
+
+    # =========================================================
+    # 2. Résolution OVMF
+    # =========================================================
+    - name: "OVMF | Rechercher le loader disponible"
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ ovmf_loader_candidates }}"
+      register: ovmf_loader_stat
+
+    - name: "OVMF | Rechercher le template NVRAM disponible"
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ ovmf_nvram_candidates }}"
+      register: ovmf_nvram_stat
+
+    - name: "OVMF | Définir les chemins OVMF"
+      ansible.builtin.set_fact:
+        ovmf_loader:          "{{ (ovmf_loader_stat.results | selectattr('stat.exists') | first).item }}"
+        ovmf_nvram_template:  "{{ (ovmf_nvram_stat.results  | selectattr('stat.exists') | first).item }}"
+
+    - name: "OVMF | Chemins retenus"
+      ansible.builtin.debug:
+        msg:
+          - "Loader UEFI : {{ ovmf_loader }}"
+          - "NVRAM template : {{ ovmf_nvram_template }}"
+
+    # =========================================================
+    # 3. Nettoyer les anciennes VMs
+    # =========================================================
+    - name: "Cleanup | Forcer l'arrêt des anciennes VMs"
+      ansible.builtin.shell: virsh destroy {{ item }} 2>/dev/null; true
+      loop: "{{ old_vms + [ref_vm_name, pxe_vm_name] }}"
+      changed_when: true
+      ignore_errors: true
+
+    - name: "Cleanup | Supprimer les définitions (avec NVRAM)"
+      ansible.builtin.shell: virsh undefine {{ item }} --nvram 2>/dev/null; true
+      loop: "{{ old_vms + [ref_vm_name, pxe_vm_name] }}"
+      changed_when: true
+      ignore_errors: true
+
+    # =========================================================
+    # 4. Archiver les anciens disques (pas de suppression)
+    # =========================================================
+    - name: "Disks | Archiver les anciens disques (.qcow2 → .qcow2.old)"
+      ansible.builtin.shell: |
+        for f in win11.qcow2 win11-client.qcow2 client-pxe.qcow2; do
+          if [ -f "{{ libvirt_images }}/$f" ]; then
+            mv "{{ libvirt_images }}/$f" "{{ libvirt_images }}/$f.old"
+            echo "Archivé : $f → $f.old"
+          fi
+        done
+      register: archive_result
+      changed_when: true
+
+    - name: "Disks | Résultat archivage"
+      ansible.builtin.debug:
+        msg: "{{ archive_result.stdout_lines }}"
+
+    # =========================================================
+    # 5. Créer les nouveaux disques vierges
+    # =========================================================
+    - name: "Disks | Créer disque win11-ref ({{ ref_vm_disk_gb }} Go, qcow2 vierge)"
+      ansible.builtin.command:
+        cmd: qemu-img create -f qcow2 {{ ref_vm_disk }} {{ ref_vm_disk_gb }}G
+        creates: "{{ ref_vm_disk }}"
+
+    - name: "Disks | Créer disque win11-pxe ({{ pxe_vm_disk_gb }} Go, qcow2 vierge)"
+      ansible.builtin.command:
+        cmd: qemu-img create -f qcow2 {{ pxe_vm_disk }} {{ pxe_vm_disk_gb }}G
+        creates: "{{ pxe_vm_disk }}"
+
+    - name: "Disks | Permissions libvirt-qemu:kvm"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        owner: libvirt-qemu
+        group: kvm
+        mode: '0660'
+      loop:
+        - "{{ ref_vm_disk }}"
+        - "{{ pxe_vm_disk }}"
+
+    # =========================================================
+    # 6. Générer l'ISO autounattend.xml (installation Windows)
+    # =========================================================
+    - name: "Autounattend | Créer le répertoire de staging"
+      ansible.builtin.file:
+        path: "{{ autounattend_staging }}"
+        state: directory
+        mode: '0755'
+      tags: [autounattend]
+
+    - name: "Autounattend | Rendre le template autounattend.xml.j2"
+      ansible.builtin.template:
+        src: templates/autounattend.xml.j2
+        dest: "{{ autounattend_staging }}/autounattend.xml"
+        mode: '0644'
+      tags: [autounattend]
+
+    - name: "Autounattend | Générer l'ISO (écrase l'existant)"
+      ansible.builtin.command: >
+        genisoimage
+        -o {{ autounattend_iso }}
+        -iso-level 3 -J -R -udf
+        {{ autounattend_staging }}/
+      changed_when: true
+      tags: [autounattend]
+
+    - name: "Autounattend | Permissions ISO"
+      ansible.builtin.file:
+        path: "{{ autounattend_iso }}"
+        owner: libvirt-qemu
+        group: kvm
+        mode: '0644'
+      tags: [autounattend]
+
+    # =========================================================
+    # 7. Copier le NVRAM UEFI pour chaque VM
+    # =========================================================
+    - name: "NVRAM | Copier le template OVMF pour win11-ref"
+      ansible.builtin.copy:
+        src: "{{ ovmf_nvram_template }}"
+        dest: "{{ libvirt_nvram }}/win11-ref_VARS.fd"
+        remote_src: true
+        force: true
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: "NVRAM | Copier le template OVMF pour win11-pxe"
+      ansible.builtin.copy:
+        src: "{{ ovmf_nvram_template }}"
+        dest: "{{ libvirt_nvram }}/win11-pxe_VARS.fd"
+        remote_src: true
+        force: true
+        owner: root
+        group: root
+        mode: '0600'
+
+    # =========================================================
+    # 8. Définir win11-ref (boot ISO → installation Windows auto)
+    # =========================================================
+    - name: "VM | Définir win11-ref via virt-install"
+      # boot order : cdrom (Windows ISO) en premier → installe Windows sur le disque
+      # Après installation, Windows enregistre son entrée UEFI et boot automatiquement
+      ansible.builtin.shell: |
+        virt-install \
+          --name {{ ref_vm_name }} \
+          --memory {{ ref_vm_ram_mb }} \
+          --vcpus {{ ref_vm_vcpus }} \
+          --disk path={{ ref_vm_disk }},bus=sata,format=qcow2 \
+          --disk {{ win_iso }},device=cdrom,bus=sata \
+          --disk {{ autounattend_iso }},device=cdrom,bus=sata \
+          --network network={{ lab_network }},model={{ nic_model }} \
+          --boot loader={{ ovmf_loader }},loader.readonly=yes,loader.type=pflash,nvram={{ libvirt_nvram }}/win11-ref_VARS.fd \
+          --boot cdrom,hd \
+          --os-variant win11 \
+          --noautoconsole \
+          --noreboot \
+          --print-xml | virsh define /dev/stdin
+      changed_when: true
+
+    # =========================================================
+    # 9. Définir win11-pxe (boot PXE → déploiement FOG)
+    # =========================================================
+    - name: "VM | Définir win11-pxe via virt-install"
+      # boot order : network (PXE FOG) en premier → déploiement image Windows
+      ansible.builtin.shell: |
+        virt-install \
+          --name {{ pxe_vm_name }} \
+          --memory {{ pxe_vm_ram_mb }} \
+          --vcpus {{ pxe_vm_vcpus }} \
+          --disk path={{ pxe_vm_disk }},bus=sata,format=qcow2 \
+          --network network={{ lab_network }},model={{ nic_model }} \
+          --boot loader={{ ovmf_loader }},loader.readonly=yes,loader.type=pflash,nvram={{ libvirt_nvram }}/win11-pxe_VARS.fd \
+          --boot network,hd \
+          --os-variant win11 \
+          --noautoconsole \
+          --noreboot \
+          --print-xml | virsh define /dev/stdin
+      changed_when: true
+
+    # =========================================================
+    # 10. Résumé
+    # =========================================================
+    - name: "Résumé"
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "Lab réinitialisé — nommage uniforme"
+          - "============================================"
+          - ""
+          - "win11-ref (VM image source)"
+          - "  Démarrer  : virsh start win11-ref"
+          - "  Console   : virt-viewer win11-ref"
+          - "  → Windows s'installe automatiquement (~20 min)"
+          - "  → IP après install : {{ win_reference_ip }}"
+          - "  → Compte WinRM    : {{ vault_winrm_user }} (cf. vault)"
+          - ""
+          - "win11-pxe (VM client PXE)"
+          - "  Démarrer après capture FOG : virsh start win11-pxe"
+          - ""
+          - "Anciens disques conservés :"
+          - "  /var/lib/libvirt/images/*.qcow2.old"
+          - "  → Supprimer manuellement si non nécessaire"
+          - ""
+          - "Prochaine étape : virsh start win11-ref"
+          - "============================================"

@@ -1,0 +1,91 @@
+---
+# Post-installation et tuning FOG
+# Usage : ansible-playbook -i inventory/hosts.yml playbooks/configure-fog.yml --ask-vault-pass
+
+- name: Configure FOG Project
+  hosts: fog_servers
+  become: true
+
+  tasks:
+    - name: Verify ipxe.efi in TFTP root
+      ansible.builtin.stat:
+        path: /tftpboot/ipxe.efi
+      register: ipxe_efi_check
+
+    - name: Warn if ipxe.efi is missing
+      ansible.builtin.fail:
+        msg: "ipxe.efi not found — run install-fog.yml first"
+      when: not ipxe_efi_check.stat.exists
+
+    - name: Check available disk space on /images
+      ansible.builtin.shell:
+        cmd: df --output=avail -BG /images | tail -1 | tr -d ' G'
+      register: images_space
+      changed_when: false
+
+    - name: Warn if /images has less than 25 GB free
+      ansible.builtin.debug:
+        msg: "WARNING: /images has only {{ images_space.stdout }} GB free — Windows 11 images need at least 25 GB"
+      when: images_space.stdout | int < 25
+
+    - name: Set FOG TFTP PXE boot file to UEFI
+      ansible.builtin.shell:
+        cmd: |
+          mysql -u fogmaster -p'{{ vault_fog_mysql_password }}' fog -e \
+          "UPDATE globalSettings SET settingValue='ipxe.efi' WHERE settingKey='FOG_TFTP_PXE_KERNEL';"
+      changed_when: false
+      no_log: true
+
+    - name: Set FOG kernel arguments
+      ansible.builtin.shell:
+        cmd: |
+          mysql -u fogmaster -p'{{ vault_fog_mysql_password }}' fog -e \
+          "UPDATE globalSettings SET settingValue='nomodeset i915.modeset=0 intel_iommu=off rootfstype=ext2 efi=runtime' WHERE settingKey='FOG_KERNEL_ARGS';"
+      changed_when: false
+      no_log: true
+
+    - name: Set FOG kernel ramdisk size
+      ansible.builtin.shell:
+        cmd: |
+          mysql -u fogmaster -p'{{ vault_fog_mysql_password }}' fog -e \
+          "UPDATE globalSettings SET settingValue='400000' WHERE settingKey='FOG_KERNEL_RAMDISK_SIZE';"
+      changed_when: false
+      no_log: true
+
+    - name: Open firewall ports for FOG
+      ansible.builtin.shell:
+        cmd: |
+          ufw allow 80/tcp comment 'FOG Web'
+          ufw allow 443/tcp comment 'FOG Web HTTPS'
+          ufw allow 69/udp comment 'TFTP'
+          ufw allow 2049/tcp comment 'NFS'
+          ufw allow 67:68/udp comment 'DHCP'
+          ufw allow 9098/tcp comment 'FOG Service'
+          ufw --force enable
+      changed_when: false
+
+    - name: Ensure FOG application services are running
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - FOGMulticastManager
+        - FOGImageReplicator
+        - FOGScheduler
+        - FOGSnapinReplicator
+      ignore_errors: true
+
+    - name: Verify FOG web interface
+      ansible.builtin.uri:
+        url: "http://{{ fog_server_ip }}/fog/management/"
+        return_content: false
+        status_code: 200
+      register: fog_web
+      retries: 3
+      delay: 5
+
+    - name: FOG status
+      ansible.builtin.debug:
+        msg: "FOG web interface is UP at http://{{ fog_server_ip }}/fog/management/"
+      when: fog_web.status == 200

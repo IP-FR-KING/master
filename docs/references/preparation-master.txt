@@ -1,0 +1,251 @@
+> Référence historique : commandes conservées pour analyse, à vérifier avant exécution. Aucun nouveau test matériel réalisé lors de cet import.
+
+================================================================================
+              PROCEDURE DE PREPARATION D'UN MASTER WINDOWS 11
+                         avec FOG Project
+================================================================================
+
+Serveur FOG : FOG_SERVER_IP
+Date : 2026-01-12
+Modèle testé : ASUS ExpertBook B3405 (Intel Core Ultra 7 255H)
+
+--------------------------------------------------------------------------------
+PREREQUIS
+--------------------------------------------------------------------------------
+
+- Clé USB Ventoy avec :
+  * ISO Windows 11 25H2
+  * ipxe.iso (copié depuis /srv/tftp/ipxe.iso du serveur FOG)
+- Accès à l'interface web FOG : http://FOG_SERVER_IP/fog/management
+- PC cible connecté au réseau (même VLAN que le serveur FOG)
+
+================================================================================
+                              WORKFLOW
+================================================================================
+
+ETAPE 1 : INSTALLATION DE WINDOWS 11
+--------------------------------------------------------------------------------
+Description : Installation propre de Windows 11 sur le PC qui servira de master.
+
+Actions :
+  1. Booter sur la clé Ventoy
+  2. Sélectionner l'ISO Windows 11 25H2
+  3. Installer Windows 11 (choisir "Je n'ai pas de clé produit" si nécessaire)
+  4. Créer un compte local administrateur temporaire (ex: "Admin")
+  5. Terminer l'installation OOBE
+
+Durée estimée : 20-30 minutes
+
+
+ETAPE 2 : PERSONNALISATION DU MASTER
+--------------------------------------------------------------------------------
+Description : Configuration et personnalisation de l'environnement Windows
+              qui sera déployé sur tous les postes.
+
+Actions :
+  1. Installer les drivers spécifiques au modèle (si nécessaire)
+  2. Installer les logiciels communs :
+     - Suite bureautique
+     - Navigateurs
+     - Outils métier
+     - Antivirus/EDR
+  3. Configurer les paramètres système :
+     - Désactiver les mises à jour automatiques (temporairement)
+     - Configurer le pare-feu
+     - Paramètres régionaux (clavier FR, fuseau horaire)
+  4. Appliquer les GPO locales si nécessaire
+  5. Nettoyer :
+     - Vider la corbeille
+     - Supprimer les fichiers temporaires
+     - Désinstaller les bloatwares
+
+Durée estimée : 30-60 minutes (selon le nombre d'applications)
+
+
+ETAPE 3 : PREPARATION AU SYSPREP
+--------------------------------------------------------------------------------
+Description : Préparation du système avant la généralisation.
+
+Actions :
+  1. Supprimer les profils utilisateurs inutiles
+  2. Vérifier qu'aucune application ne bloque le sysprep :
+     - Ouvrir PowerShell en admin :
+       Get-AppxPackage | Where-Object {$_.PackageUserInformation -match "Staged"} | Remove-AppxPackage
+  3. Désactiver BitLocker si activé :
+       manage-bde -off C:
+  4. Vider le cache Windows Update :
+       net stop wuauserv
+       rd /s /q C:\Windows\SoftwareDistribution
+       net start wuauserv
+
+Durée estimée : 10-15 minutes
+
+
+ETAPE 4 : EXECUTION DU SYSPREP
+--------------------------------------------------------------------------------
+Description : Généralisation de l'image Windows pour permettre le déploiement
+              sur d'autres machines avec des configurations matérielles différentes.
+
+Actions :
+  1. Ouvrir une invite de commande en administrateur
+  2. Exécuter :
+     C:\Windows\System32\Sysprep\sysprep.exe /generalize /oobe /shutdown
+  3. Attendre la fin du processus (le PC s'éteindra automatiquement)
+
+Options sysprep :
+  - /generalize : Supprime les informations spécifiques au matériel (SID, drivers)
+  - /oobe       : Déclenche l'écran de configuration au prochain démarrage
+  - /shutdown   : Éteint le PC après sysprep (NE PAS rallumer sous Windows !)
+
+ATTENTION : Après le shutdown, ne JAMAIS redémarrer sur Windows avant la capture !
+            Cela annulerait le sysprep.
+
+Durée estimée : 5-10 minutes
+
+
+ETAPE 5 : ENREGISTREMENT DU PC DANS FOG
+--------------------------------------------------------------------------------
+Description : Création de l'entrée host dans FOG pour permettre la capture.
+
+Actions :
+  1. Accéder à l'interface FOG : http://FOG_SERVER_IP/fog/management
+  2. Aller dans "Hosts" → "Create New Host"
+  3. Remplir les informations :
+     - Host Name : NOM-PC-MASTER (ex: MASTER-W11-25H2)
+     - Primary MAC : Adresse MAC du PC (visible sur l'étiquette ou via ipconfig /all)
+     - Host Image : Sélectionner ou créer une image
+  4. Sauvegarder
+
+Pour créer une nouvelle image :
+  1. "Images" → "Create New Image"
+  2. Remplir :
+     - Image Name : W11-25H2-MASTER
+     - Image Type : Multiple Partition Image - Single Disk (Not Resizable)
+     - Operating System : Windows 11
+
+Durée estimée : 5 minutes
+
+
+ETAPE 6 : PROGRAMMATION DE LA TACHE DE CAPTURE
+--------------------------------------------------------------------------------
+Description : Planification de la capture d'image dans FOG.
+
+Actions :
+  1. Dans FOG, aller sur le host créé
+  2. Cliquer sur "Basic Tasks"
+  3. Sélectionner "Capture"
+  4. Confirmer la tâche
+
+La tâche sera exécutée au prochain boot du PC sur FOG.
+
+Durée estimée : 2 minutes
+
+
+ETAPE 7 : BOOT SUR IPXE ET CAPTURE
+--------------------------------------------------------------------------------
+Description : Démarrage du PC sur l'environnement FOG pour lancer la capture.
+
+Actions :
+  1. Brancher la clé Ventoy sur le PC master (éteint)
+  2. Allumer le PC et booter sur la clé USB
+  3. Dans Ventoy, sélectionner "ipxe.iso"
+  4. Le menu FOG apparaît
+  5. La capture démarre automatiquement (tâche programmée à l'étape 6)
+  6. Attendre la fin du transfert de l'image
+
+Note : Si la capture ne démarre pas automatiquement :
+  - Vérifier que la MAC correspond à celle enregistrée dans FOG
+  - Sélectionner manuellement "Quick Registration" puis reprogrammer la capture
+
+Durée estimée : 15-45 minutes (selon taille du disque et vitesse réseau)
+
+
+ETAPE 8 : VERIFICATION DE L'IMAGE
+--------------------------------------------------------------------------------
+Description : Contrôle de l'intégrité de l'image capturée.
+
+Actions :
+  1. Dans FOG, aller dans "Images"
+  2. Vérifier que l'image a une taille cohérente
+  3. Sur le serveur FOG, vérifier les fichiers :
+     ls -lh /images/W11-25H2-MASTER/
+  4. Optionnel : Tester le déploiement sur un PC de test
+
+Durée estimée : 5 minutes (hors test de déploiement)
+
+
+================================================================================
+                         DEPLOIEMENT DE L'IMAGE
+================================================================================
+
+Pour déployer l'image sur d'autres PC :
+
+OPTION A - Via PXE (si compatible) :
+  1. Enregistrer le PC cible dans FOG (manuellement ou Quick Registration)
+  2. Associer l'image au host
+  3. Programmer une tâche "Deploy"
+  4. Booter le PC en PXE
+
+OPTION B - Via clé USB (si PXE incompatible) :
+  1. Enregistrer le PC cible dans FOG
+  2. Associer l'image et programmer "Deploy"
+  3. Booter sur Ventoy → ipxe.iso
+  4. Le déploiement démarre automatiquement
+
+
+================================================================================
+                              TROUBLESHOOTING
+================================================================================
+
+PROBLEME : Kernel panic au boot PXE/iPXE
+--------------------------------------------------------------------------------
+Cause probable : Incompatibilité matérielle (CPU Intel récent, UEFI)
+
+Solutions :
+  1. Ajouter des paramètres kernel dans FOG :
+     - Interface FOG → FOG Configuration → Kernel Settings
+     - FOG_KERNEL_ARGS : nomodeset i915.modeset=0 intel_iommu=off
+
+  2. Mettre à jour les fichiers FOS :
+     cd /var/www/fog/service/ipxe
+     sudo wget https://github.com/FOGProject/fos/releases/download/20251221/init.xz
+     sudo wget https://github.com/FOGProject/fos/releases/download/20251221/bzImage
+
+  3. Utiliser le boot USB au lieu du PXE (solution de contournement)
+
+
+PROBLEME : Sysprep échoue
+--------------------------------------------------------------------------------
+Causes possibles :
+  - Applications UWP en état "staged"
+  - BitLocker activé
+  - Profil utilisateur corrompu
+
+Solutions :
+  1. Consulter le log : C:\Windows\System32\Sysprep\Panther\setuperr.log
+  2. Supprimer les apps problématiques (voir étape 3)
+
+
+PROBLEME : Image corrompue après capture
+--------------------------------------------------------------------------------
+Solutions :
+  1. Vérifier l'espace disque sur /images
+  2. Vérifier les logs FOG : /opt/fog/log/
+  3. Recapturer l'image
+
+
+================================================================================
+                              INFORMATIONS SERVEUR
+================================================================================
+
+Serveur FOG : FOG_SERVER_IP
+Interface web : http://FOG_SERVER_IP/fog/management
+Images stockées : /images/
+Logs : /opt/fog/log/ et /var/log/fog/
+Version FOS : 20251221 (kernel 6.12.35)
+
+Paramètres kernel actuels :
+  FOG_KERNEL_ARGS : nomodeset i915.modeset=0 intel_iommu=off rootfstype=ext2 efi=runtime
+  FOG_KERNEL_RAMDISK_SIZE : 400000
+
+================================================================================

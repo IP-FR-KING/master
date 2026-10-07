@@ -1,0 +1,223 @@
+---
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/customize-win11-reference.yml --ask-vault-pass
+# Responsabilité : Personnalisation de l'image de référence Windows 11
+#   - Mises à jour Windows
+#   - Installation d'applications (Chocolatey : Firefox, 7-Zip, Notepad++)
+#   - Fond d'écran personnalisé (Default User hive)
+#   - Raccourcis bureau public
+#   - Nettoyage bloatware et fichiers temporaires
+# Prérequis : win11-reference démarrée sous Windows, WinRM actif
+
+- name: Customize Windows 11 reference image
+  hosts: win_hosts
+  gather_facts: true
+
+  tasks:
+
+    # -------------------------------------------------------------------------
+    # 1. Mises à jour Windows
+    # -------------------------------------------------------------------------
+
+    - name: "Updates | Installer toutes les mises à jour Windows"
+      ansible.windows.win_updates:
+        category_names:
+          - CriticalUpdates
+          - SecurityUpdates
+          - UpdateRollups
+          - Updates
+        reboot: true
+        reboot_timeout: 600
+        state: installed
+      register: win_update_result
+
+    - name: "Updates | Résultat"
+      ansible.builtin.debug:
+        msg: "{{ win_update_result.found_update_count }} mise(s) à jour installée(s). Relancer le playbook si d'autres mises à jour apparaissent."
+
+    # -------------------------------------------------------------------------
+    # 2. Bootstrap Chocolatey
+    # -------------------------------------------------------------------------
+
+    - name: "Choco | Vérifier si Chocolatey est déjà installé"
+      ansible.windows.win_stat:
+        path: C:\ProgramData\chocolatey\choco.exe
+      register: choco_stat
+
+    - name: "Choco | Installer Chocolatey"
+      ansible.windows.win_shell: |
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+      when: not choco_stat.stat.exists
+      changed_when: true
+
+    # -------------------------------------------------------------------------
+    # 3. Installation des applications via Chocolatey
+    # -------------------------------------------------------------------------
+
+    - name: "Apps | Vérifier Firefox"
+      ansible.windows.win_stat:
+        path: C:\Program Files\Mozilla Firefox\firefox.exe
+      register: firefox_stat
+
+    - name: "Apps | Installer Firefox"
+      ansible.windows.win_shell: choco install firefox -y --no-progress --limit-output
+      when: not firefox_stat.stat.exists
+      changed_when: true
+
+    - name: "Apps | Vérifier 7-Zip"
+      ansible.windows.win_stat:
+        path: C:\Program Files\7-Zip\7zFM.exe
+      register: sevenzip_stat
+
+    - name: "Apps | Installer 7-Zip"
+      ansible.windows.win_shell: choco install 7zip -y --no-progress --limit-output
+      when: not sevenzip_stat.stat.exists
+      changed_when: true
+
+    - name: "Apps | Vérifier Notepad++"
+      ansible.windows.win_stat:
+        path: C:\Program Files\Notepad++\notepad++.exe
+      register: npp_stat
+
+    - name: "Apps | Installer Notepad++"
+      ansible.windows.win_shell: choco install notepadplusplus -y --no-progress --limit-output
+      when: not npp_stat.stat.exists
+      changed_when: true
+
+    # -------------------------------------------------------------------------
+    # 4. Fond d'écran personnalisé
+    # -------------------------------------------------------------------------
+
+    - name: "Wallpaper | Créer le répertoire Custom dans Web/Wallpaper"
+      when: win_custom_wallpaper_enabled | default(false) | bool
+      ansible.windows.win_file:
+        path: C:\Windows\Web\Wallpaper\Custom
+        state: directory
+
+    - name: "Wallpaper | Vérifier si le fond d'écran existe déjà"
+      when: win_custom_wallpaper_enabled | default(false) | bool
+      ansible.windows.win_stat:
+        path: "{{ win_wallpaper_path }}"
+      register: wallpaper_stat
+
+    - name: "Wallpaper | Copier le fond d'écran personnalisé (depuis le contrôleur)"
+      when: win_custom_wallpaper_enabled | default(false) | bool
+      ansible.windows.win_copy:
+        src: files/wallpaper-entreprise.jpg
+        dest: "{{ win_wallpaper_path }}"
+        force: true
+
+    - name: "Wallpaper | Définir le fond d'écran par défaut (Default User hive)"
+      when: win_custom_wallpaper_enabled | default(false) | bool
+      # Applique le wallpaper pour tous les nouveaux profils utilisateurs créés après déploiement.
+      ansible.windows.win_shell: |
+        $hive = "C:\Users\Default\NTUSER.DAT"
+        $key   = "HKLM:\DefaultUserCustom"
+        # Charger le hive uniquement s'il n'est pas déjà chargé
+        if (-not (Test-Path $key)) {
+            reg load HKLM\DefaultUserCustom $hive | Out-Null
+        }
+        $desktop = "HKLM:\DefaultUserCustom\Control Panel\Desktop"
+        if (-not (Test-Path $desktop)) {
+            New-Item -Path $desktop -Force | Out-Null
+        }
+        Set-ItemProperty -Path $desktop -Name Wallpaper      -Value "{{ win_wallpaper_path }}" -Type String
+        Set-ItemProperty -Path $desktop -Name WallpaperStyle -Value "10" -Type String  # Fill
+        Set-ItemProperty -Path $desktop -Name TileWallpaper  -Value "0"  -Type String
+        [gc]::Collect()
+        reg unload HKLM\DefaultUserCustom | Out-Null
+      changed_when: true
+
+    # -------------------------------------------------------------------------
+    # 5. Raccourcis bureau public
+    # -------------------------------------------------------------------------
+
+    - name: "Shortcuts | Raccourci Firefox sur le bureau public"
+      community.windows.win_shortcut:
+        src: C:\Program Files\Mozilla Firefox\firefox.exe
+        dest: C:\Users\Public\Desktop\Firefox.lnk
+        state: present
+      when: firefox_stat.stat.exists or not firefox_stat.stat.exists  # toujours, après install
+
+    - name: "Shortcuts | Raccourci 7-Zip sur le bureau public"
+      community.windows.win_shortcut:
+        src: C:\Program Files\7-Zip\7zFM.exe
+        dest: C:\Users\Public\Desktop\7-Zip.lnk
+        state: present
+
+    - name: "Shortcuts | Raccourci Notepad++ sur le bureau public"
+      community.windows.win_shortcut:
+        src: C:\Program Files\Notepad++\notepad++.exe
+        dest: C:\Users\Public\Desktop\Notepad++.lnk
+        state: present
+
+    # -------------------------------------------------------------------------
+    # 6. Nettoyage — désactivation bloatware et fichiers temporaires
+    # -------------------------------------------------------------------------
+
+    - name: "Cleanup | Désactiver le bouton Teams Chat dans la barre des tâches"
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+        name: TaskbarMn
+        data: 0
+        type: dword
+        state: present
+
+    - name: "Cleanup | Désactiver les Widgets dans la barre des tâches"
+      # Clé policy — contourne les restrictions HKLM\Explorer\Advanced sur Win11
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Policies\Microsoft\Dsh
+        name: AllowNewsAndInterests
+        data: 0
+        type: dword
+        state: present
+
+    - name: "Cleanup | Supprimer les apps Xbox provisionnées"
+      ansible.windows.win_shell: |
+        Get-AppxProvisionedPackage -Online |
+          Where-Object { $_.PackageName -match "(?i)Xbox" } |
+          ForEach-Object {
+              Write-Host "Suppression : $($_.PackageName)"
+              Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue
+          }
+      changed_when: true
+      ignore_errors: true
+
+    - name: "Cleanup | Supprimer Clipchamp provisionné"
+      ansible.windows.win_shell: |
+        Get-AppxProvisionedPackage -Online |
+          Where-Object { $_.PackageName -match "(?i)Clipchamp" } |
+          ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue }
+      changed_when: true
+      ignore_errors: true
+
+    - name: "Cleanup | Vider les fichiers temporaires"
+      ansible.windows.win_shell: |
+        $paths = @("$env:TEMP", "C:\Windows\Temp", "C:\Windows\SoftwareDistribution\Download")
+        foreach ($p in $paths) {
+            if (Test-Path $p) {
+                Remove-Item -Path "$p\*" -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+        exit 0
+      changed_when: true
+      ignore_errors: true
+
+    - name: "Cleanup | Vider la corbeille"
+      ansible.windows.win_shell: |
+        Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+      changed_when: true
+
+    - name: "Cleanup | Résumé des personnalisations appliquées"
+      ansible.builtin.debug:
+        msg:
+          - "Mises à jour Windows : {{ win_update_result.found_update_count }} installée(s)"
+          - "Firefox    : {{ 'installé' if not firefox_stat.stat.exists else 'déjà présent' }}"
+          - "7-Zip      : {{ 'installé' if not sevenzip_stat.stat.exists else 'déjà présent' }}"
+          - "Notepad++  : {{ 'installé' if not npp_stat.stat.exists else 'déjà présent' }}"
+          - "Fond d'écran : {{ win_wallpaper_path }}"
+          - "Raccourcis bureau public : Firefox, 7-Zip, Notepad++"
+          - "Bloatware désactivé : Teams Chat, Widgets, Xbox, Clipchamp"
+          - "Prochaine étape : ansible-playbook playbooks/sysprep-win11.yml"

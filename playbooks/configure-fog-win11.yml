@@ -1,0 +1,141 @@
+---
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/configure-fog-win11.yml --ask-vault-pass
+# Responsabilité : Configuration FOG Project pour déploiement d'images Windows 11 UEFI
+
+- name: Configure FOG Project for Windows 11 deployment
+  hosts: fog_servers
+  become: true
+
+  vars:
+    fog_tftp_root: /tftpboot
+    fog_ipxe_dir: /var/www/html/fog/service/ipxe
+    fog_images_mount: /images
+    fog_disk_min_gb: 25
+  tasks:
+
+    # -------------------------------------------------------------------------
+    # 1. Vérification des prérequis UEFI
+    # -------------------------------------------------------------------------
+
+    - name: "UEFI | Vérifier la présence de ipxe.efi dans {{ fog_tftp_root }}"
+      ansible.builtin.stat:
+        path: "{{ fog_tftp_root }}/ipxe.efi"
+      register: ipxe_efi_stat
+
+    - name: "UEFI | Échouer si ipxe.efi est absent"
+      ansible.builtin.fail:
+        msg: >
+          ipxe.efi introuvable dans {{ fog_tftp_root }}.
+          Installez le paquet ipxe ou copiez le fichier manuellement.
+      when: not ipxe_efi_stat.stat.exists
+
+    - name: "UEFI | Vérifier la présence du kernel FOS (bzImage)"
+      ansible.builtin.stat:
+        path: "{{ fog_ipxe_dir }}/bzImage"
+      register: bzimage_stat
+
+    - name: "UEFI | Vérifier la présence de init.xz"
+      ansible.builtin.stat:
+        path: "{{ fog_ipxe_dir }}/init.xz"
+      register: initxz_stat
+
+    - name: "UEFI | Échouer si les kernels FOS sont absents"
+      ansible.builtin.fail:
+        msg: >
+          Kernel(s) FOS manquant(s) dans {{ fog_ipxe_dir }}.
+          bzImage={{ bzimage_stat.stat.exists }}, init.xz={{ initxz_stat.stat.exists }}.
+          Réinstallez FOG ou téléchargez les kernels depuis https://fogproject.org/kernels/.
+      when: not bzimage_stat.stat.exists or not initxz_stat.stat.exists
+
+    - name: "UEFI | Prérequis validés"
+      ansible.builtin.debug:
+        msg: "ipxe.efi, bzImage et init.xz sont présents."
+
+    # -------------------------------------------------------------------------
+    # 2. Création idempotente de l'image Windows 11 via MySQL
+    # -------------------------------------------------------------------------
+
+    - name: "Image | Vérifier si l'image '{{ fog_image_name }}' existe déjà"
+      ansible.builtin.shell:
+        cmd: >
+          mysql -ufogmaster -p'{{ vault_fog_mysql_password }}' fog -N -e
+          "SELECT COUNT(*) FROM images WHERE imageName='{{ fog_image_name }}';"
+      register: fog_image_count
+      changed_when: false
+      no_log: true
+
+    - name: "Image | Créer l'image '{{ fog_image_name }}' dans FOG"
+      ansible.builtin.shell:
+        cmd: >
+          mysql -ufogmaster -p'{{ vault_fog_mysql_password }}' fog -e
+          "INSERT INTO images (imageName, imageDesc, imagePath, imageProtect, imageMagnetUri, imageCreateBy, imageBuilding, imageSize, imageTypeID, imagePartitionTypeID, imageOSID, imageCompress, imageEnabled, imageReplicate, imageLastDeploy)
+           VALUES ('{{ fog_image_name }}', 'Windows 11 base image', '{{ fog_image_name }}', 0, '', 'fog', 0, '', {{ fog_image_type }}, 1, 5, 6, '1', '1', '0000-00-00 00:00:00');"
+      when: fog_image_count.stdout | trim | int == 0
+      no_log: true
+
+    - name: "Image | Créer le répertoire de stockage"
+      ansible.builtin.file:
+        path: "{{ fog_images_mount }}/{{ fog_image_name }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0777"
+
+    - name: "Image | Résultat"
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Image ' + fog_image_name + ' créée (type ' + fog_image_type | string + ' = Multiple Partition Single Disk)'
+             if fog_image_count.stdout | trim | int == 0
+             else 'Image ' + fog_image_name + ' existe déjà — skip' }}
+
+    # -------------------------------------------------------------------------
+    # 3. Configuration des settings FOG pour Windows 11 UEFI via MySQL
+    # -------------------------------------------------------------------------
+
+    - name: "MySQL | Appliquer les settings FOG pour Windows 11 UEFI"
+      ansible.builtin.shell:
+        cmd: |
+          mysql -ufogmaster -p'{{ vault_fog_mysql_password }}' fog -e \
+          "UPDATE globalSettings SET settingValue='{{ item.value }}' WHERE settingKey='{{ item.key }}';"
+      loop:
+        - { key: "FOG_TFTP_PXE_KERNEL", value: "ipxe.efi" }
+        - { key: "FOG_MEMORY_LIMIT", value: "512" }
+        - { key: "FOG_KERNEL_RAMDISK_SIZE", value: "400000" }
+      loop_control:
+        label: "{{ item.key }} = {{ item.value }}"
+      changed_when: false
+      no_log: true
+
+    - name: "MySQL | Settings FOG Windows 11 UEFI appliqués"
+      ansible.builtin.debug:
+        msg:
+          - "FOG_TFTP_PXE_KERNEL  = ipxe.efi"
+          - "FOG_MEMORY_LIMIT      = 512 MB"
+          - "FOG_KERNEL_RAMDISK_SIZE = 400000 KB"
+
+    # -------------------------------------------------------------------------
+    # 4. Vérification de l'espace disque sur /images/
+    # -------------------------------------------------------------------------
+
+    - name: "Disk | Récupérer les infos de /images/"
+      ansible.builtin.shell:
+        cmd: "df -BG --output=avail {{ fog_images_mount }} | tail -1 | tr -d 'G'"
+      register: fog_images_free_gb
+      changed_when: false
+
+    - name: "Disk | Calculer l'espace libre (entier)"
+      ansible.builtin.set_fact:
+        fog_free_gb: "{{ fog_images_free_gb.stdout | trim | int }}"
+
+    - name: "Disk | WARNING — espace insuffisant sur {{ fog_images_mount }}"
+      ansible.builtin.debug:
+        msg: >
+          [WARNING] Seulement {{ fog_free_gb }} Go libres sur {{ fog_images_mount }}.
+          Minimum recommandé : {{ fog_disk_min_gb }} Go.
+          Une image Windows 11 compressée occupe typiquement 8-15 Go.
+      when: fog_free_gb | int < fog_disk_min_gb
+
+    - name: "Disk | Espace disque OK"
+      ansible.builtin.debug:
+        msg: "{{ fog_free_gb }} Go libres sur {{ fog_images_mount }} (min: {{ fog_disk_min_gb }} Go)."
+      when: fog_free_gb | int >= fog_disk_min_gb

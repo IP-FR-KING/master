@@ -1,0 +1,179 @@
+---
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/sysprep-win11.yml --ask-vault-pass
+# Responsabilité : Déployer unattend.xml + exécuter Sysprep sur win11-reference
+#
+# ⚠️  ACTION DESTRUCTIVE — La VM sera généralisée et éteinte automatiquement.
+#    Ne PAS redémarrer sous Windows après ce playbook.
+#    Prochaine étape : boot PXE → capture FOG.
+#
+# Prérequis :
+#   - customize-win11-reference.yml exécuté avec succès
+#   - win11-reference démarrée sous Windows, WinRM actif
+
+- name: Sysprep Windows 11 reference image
+  hosts: "{{ sysprep_target | default('win_hosts') }}"
+  gather_facts: false
+
+  vars:
+    sysprep_unattend_path: 'C:\Windows\Panther\unattend.xml'
+    sysprep_exe: 'C:\Windows\System32\Sysprep\sysprep.exe'
+    spopk_dll: 'C:\Windows\System32\spopk.dll'
+    sysprep_action_files: 'C:\Windows\System32\Sysprep\ActionFiles'
+
+  tasks:
+
+    # -------------------------------------------------------------------------
+    # 1. Fix préventif spopk.dll (cause d'échec Sysprep connue sur Win11)
+    #    - spopk.dll supprimée (takeown + icacls obligatoires)
+    #    - ActionFiles remplacés par des versions pré-nettoyées (XPath, pas line-filter)
+    #      générées depuis l'ISO Win11_25H2_French_x64.iso
+    # -------------------------------------------------------------------------
+
+    - name: "Spopk | Vérifier la présence de spopk.dll"
+      ansible.windows.win_stat:
+        path: "{{ spopk_dll }}"
+      register: spopk_stat
+
+    - name: "Spopk | takeown /f — prendre possession de spopk.dll"
+      ansible.windows.win_shell: takeown /f "{{ spopk_dll }}" /a
+      when: spopk_stat.stat.exists
+      changed_when: true
+
+    - name: "Spopk | icacls — accorder Administrators:F sur spopk.dll"
+      ansible.windows.win_shell: 'icacls "{{ spopk_dll }}" /grant "*S-1-5-32-544:F"'
+      when: spopk_stat.stat.exists
+      changed_when: true
+
+    - name: "Spopk | Supprimer spopk.dll"
+      ansible.windows.win_file:
+        path: "{{ spopk_dll }}"
+        state: absent
+      when: spopk_stat.stat.exists
+
+    # takeown + icacls sur les ActionFiles avant remplacement
+    - name: "Spopk | takeown sur ActionFiles"
+      ansible.windows.win_shell: takeown /f "{{ sysprep_action_files }}\*.xml" /a
+      changed_when: true
+
+    - name: "Spopk | icacls Administrators:F sur ActionFiles"
+      ansible.windows.win_shell: 'icacls "{{ sysprep_action_files }}\*.xml" /grant "*S-1-5-32-544:F"'
+      changed_when: true
+
+    # Remplacer les 3 fichiers contenant des refs spopk par des versions pré-nettoyées
+    # (extraites de l'ISO Win11_25H2_French_x64.iso, nettoyées en XPath local)
+    - name: "Spopk | Déployer Cleanup.xml pré-nettoyé"
+      ansible.windows.win_copy:
+        src: files/sysprep_Cleanup.xml
+        dest: "{{ sysprep_action_files }}\\Cleanup.xml"
+        force: true
+
+    - name: "Spopk | Déployer Generalize.xml pré-nettoyé"
+      ansible.windows.win_copy:
+        src: files/sysprep_Generalize.xml
+        dest: "{{ sysprep_action_files }}\\Generalize.xml"
+        force: true
+
+    - name: "Spopk | Déployer Specialize.xml pré-nettoyé"
+      ansible.windows.win_copy:
+        src: files/sysprep_Specialize.xml
+        dest: "{{ sysprep_action_files }}\\Specialize.xml"
+        force: true
+
+    - name: "Spopk | Fix appliqué"
+      ansible.builtin.debug:
+        msg: "{{ 'spopk.dll supprimé + ActionFiles remplacés par versions pré-nettoyées.' if spopk_stat.stat.exists else 'spopk.dll absent — ActionFiles remplacés par précaution.' }}"
+
+    # -------------------------------------------------------------------------
+    # 2. Fix SysprepCorrupt — drapeau posé par un échec Sysprep précédent
+    #    HKLM\SOFTWARE\...\Setup\Sysprep -> SysprepCorrupt = 1 bloque tout
+    # -------------------------------------------------------------------------
+
+    - name: "SysprepCorrupt | Vérifier la présence du drapeau SysprepCorrupt"
+      ansible.windows.win_reg_stat:
+        path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\Sysprep
+        name: SysprepCorrupt
+      register: sysprep_corrupt_stat
+
+    - name: "SysprepCorrupt | Supprimer le drapeau SysprepCorrupt"
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\Sysprep
+        name: SysprepCorrupt
+        state: absent
+      when: sysprep_corrupt_stat.exists and sysprep_corrupt_stat.value | int != 0
+
+    - name: "SysprepCorrupt | Nettoyer les logs Sysprep\\Panther (évite faux positifs)"
+      ansible.windows.win_shell: |
+        Remove-Item 'C:\Windows\System32\Sysprep\Panther\*' -Force -ErrorAction SilentlyContinue
+      changed_when: true
+      when: sysprep_corrupt_stat.exists and sysprep_corrupt_stat.value | int != 0
+
+    - name: "SysprepCorrupt | Statut"
+      ansible.builtin.debug:
+        msg: "{{ 'SysprepCorrupt supprimé + Panther nettoyé.' if (sysprep_corrupt_stat.exists and sysprep_corrupt_stat.value | int != 0) else 'SysprepCorrupt absent — rien à faire.' }}"
+
+    # -------------------------------------------------------------------------
+    # 3. Vider le log Sysprep (évite les faux positifs de l'étape précédente)
+    # -------------------------------------------------------------------------
+
+    - name: "Sysprep | Vider l'ancien log setuperr.log si présent"
+      ansible.windows.win_file:
+        path: C:\Windows\Panther\setuperr.log
+        state: absent
+      ignore_errors: true
+
+    # -------------------------------------------------------------------------
+    # 3. Déployer unattend.xml depuis le template Jinja2
+    # -------------------------------------------------------------------------
+
+    - name: "Unattend | S'assurer que le repertoire Panther existe"
+      ansible.windows.win_file:
+        path: C:\Windows\Panther
+        state: directory
+
+    - name: "Unattend | Déployer unattend.xml (rendu depuis le template Jinja2)"
+      ansible.windows.win_template:
+        src: templates/unattend.xml.j2
+        dest: "{{ sysprep_unattend_path }}"
+
+    - name: "Unattend | Vérifier le fichier déployé"
+      ansible.windows.win_stat:
+        path: "{{ sysprep_unattend_path }}"
+      register: unattend_stat
+
+    - name: "Unattend | Échec si unattend.xml absent"
+      ansible.builtin.fail:
+        msg: "unattend.xml non trouvé à {{ sysprep_unattend_path }} — arrêt avant Sysprep."
+      when: not unattend_stat.stat.exists
+
+    # -------------------------------------------------------------------------
+    # 4. ⚠️  SYSPREP — Point de non-retour
+    #    La connexion WinRM sera perdue lors de l'arrêt (normal)
+    # -------------------------------------------------------------------------
+
+    - name: "AVERTISSEMENT — Sysprep imminent"
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "⚠️  SYSPREP VA ÊTRE LANCÉ SUR {{ inventory_hostname }} ({{ ansible_host }})"
+          - "  Commande : sysprep.exe /generalize /oobe /shutdown"
+          - "  unattend : {{ sysprep_unattend_path }}"
+          - "La machine sera GÉNÉRALISÉE et ÉTEINTE automatiquement."
+          - "La connexion WinRM sera perdue — c'est attendu."
+          - "Ne PAS redémarrer sous Windows après cette étape."
+          - "Prochaine étape : boot PXE → capture FOG."
+          - "================================================================"
+
+    - name: "Sysprep | Lancer sysprep /generalize /oobe /shutdown avec unattend.xml"
+      # async + poll:0 = fire-and-forget (la VM s'éteint, WinRM coupe — attendu)
+      ansible.windows.win_shell: >
+        {{ sysprep_exe }} /generalize /oobe /shutdown /unattend:"{{ sysprep_unattend_path }}"
+      async: 300
+      poll: 0
+      changed_when: true
+
+    - name: "Sysprep | Sysprep lancé en arrière-plan — attendre l'arrêt de la VM"
+      ansible.builtin.debug:
+        msg:
+          - "Sysprep démarré. La VM win11-ref va s'éteindre dans 2-5 minutes."
+          - "Surveiller l'état : virsh domstate win11-ref"
+          - "Quand shut off : configurer boot PXE et lancer la capture FOG."

@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  unattend.xml — Answer file pour déploiement Windows 11 sans intervention manuelle
+  Généré par Ansible depuis playbooks/templates/unattend.xml.j2
+  Variables Jinja2 résolues depuis inventory/group_vars/all/vars.yml + vault.yml
+
+  Comportement OOBE :
+    - Bypass complet de l'écran de compte Microsoft (HideOnlineAccountScreens)
+    - Compte local administrateur créé automatiquement (UserAccounts)
+    - Acceptation EULA automatique
+    - Fuseau horaire, locale et clavier français configurés
+    - Pas de connexion réseau requise pendant l'OOBE
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <!-- =========================================================
+       Pass specialize : locale système et fuseau horaire
+       ========================================================= -->
+  <settings pass="specialize">
+
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>{{ win_keyboard_layout }}</InputLocale>
+      <SystemLocale>{{ win_locale }}</SystemLocale>
+      <UILanguage>{{ win_locale }}</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>{{ win_locale }}</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <!-- * = suffixe aléatoire généré par Windows (ex: DESKTOP-A3B2C1) -->
+      <ComputerName>*</ComputerName>
+      <TimeZone>{{ win_timezone }}</TimeZone>
+    </component>
+
+  </settings>
+
+  <!-- =========================================================
+       Pass oobeSystem : bypass OOBE + création compte local
+       ========================================================= -->
+  <settings pass="oobeSystem">
+
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>{{ win_keyboard_layout }}</InputLocale>
+      <SystemLocale>{{ win_locale }}</SystemLocale>
+      <UILanguage>{{ win_locale }}</UILanguage>
+      <UserLocale>{{ win_locale }}</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <TimeZone>{{ win_timezone }}</TimeZone>
+
+      <!-- Bypass OOBE complet — ordre important pour Windows 11 22H2/23H2 -->
+      <OOBE>
+        <!-- Accepte le CLUF sans interaction -->
+        <HideEULAPage>true</HideEULAPage>
+        <!-- Masque l'écran de compte local (compte défini dans UserAccounts) -->
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <!-- Clé principale : masque l'écran de compte Microsoft (BypassNRO équivalent) -->
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <!-- Masque la configuration Wi-Fi (réseau filaire en lab) -->
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <!-- Type de réseau (évite les questions de partage) -->
+        <NetworkLocation>Work</NetworkLocation>
+        <!-- 3 = ne pas configurer la protection Windows Defender maintenant -->
+        <ProtectYourPC>3</ProtectYourPC>
+        <!-- Hérités Win10, encore honorés par certaines builds Win11 -->
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+
+      <!-- Compte local administrateur créé automatiquement -->
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Password>
+              <!-- vault_win_local_password — défini dans vault.yml, jamais en clair dans le repo -->
+              <Value>{{ vault_win_local_password }}</Value>
+              <PlainText>true</PlainText>
+            </Password>
+            <Description>Compte administrateur local</Description>
+            <DisplayName>{{ win_local_admin }}</DisplayName>
+            <Group>Administrators</Group>
+            <Name>{{ win_local_admin }}</Name>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+
+      <!-- Connexion automatique au premier démarrage (1 fois) pour appliquer les personnalisations -->
+      <AutoLogon>
+        <Password>
+          <Value>{{ vault_win_local_password }}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Username>{{ win_local_admin }}</Username>
+      </AutoLogon>
+
+      <!-- Commandes exécutées lors de la première connexion automatique -->
+      <FirstLogonCommands>
+{% if win_custom_wallpaper_enabled | default(false) %}
+        <SynchronousCommand wcm:action="add">
+          <!-- Appliquer le fond d'écran pour l'utilisateur courant -->
+          <CommandLine>reg add "HKCU\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d "{{ win_wallpaper_path }}" /f</CommandLine>
+          <Description>Appliquer le fond d'écran personnalisé</Description>
+          <Order>1</Order>
+        </SynchronousCommand>
+{% endif %}
+        <SynchronousCommand wcm:action="add">
+          <!-- Forcer le rafraîchissement du bureau -->
+          <CommandLine>RUNDLL32.EXE user32.dll,UpdatePerUserSystemParameters ,1 ,True</CommandLine>
+          <Description>Rafraîchir le bureau</Description>
+          <Order>2</Order>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+
+    </component>
+
+  </settings>
+
+</unattend>

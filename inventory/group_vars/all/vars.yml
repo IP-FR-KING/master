@@ -1,0 +1,42 @@
+---
+# Variables communes — environnement de test libvirt local
+# Les secrets sont dans vault.yml (chiffré)
+
+# IP de la VM FOG sur le réseau libvirt fog-pxe
+fog_server_ip: 192.168.100.10
+
+# Configuration DHCP pour PXE boot
+dhcp_subnet: 192.168.100.0
+dhcp_netmask: 255.255.255.0
+dhcp_gateway: 192.168.100.1
+dhcp_range_start: 192.168.100.100
+dhcp_range_end: 192.168.100.200
+
+# Interface réseau FOG (côté DHCP/PXE)
+fog_interface: enp1s0
+
+# FOG
+fog_version: master
+
+# Windows 11 image settings
+fog_image_name: "Windows11-Base"
+fog_image_type: 4  # Multiple Partition - Single Disk (Not Resizable)
+
+# Nommage uniforme des VMs lab
+win_ref_vm_name: win11-ref    # VM image source Windows 11
+win_pxe_vm_name: win11-pxe   # VM client de test déploiement PXE
+
+# IP statique win11-ref (hors plage DHCP FOG 100-200)
+# Définie par autounattend.xml au premier démarrage
+win_reference_ip: 192.168.100.50
+
+# Compte local créé par unattend.xml lors du déploiement FOG (clients)
+win_local_admin: Administrateur
+
+# Fuseau horaire et locale France
+win_timezone: Romance Standard Time
+win_locale: fr-FR
+win_keyboard_layout: "040C:0000040C"  # AZERTY français
+
+# Chemin du fond d'écran personnalisé (sur la VM Windows)
+win_wallpaper_path: 'C:\Windows\Web\Wallpaper\Custom\wallpaper-entreprise.jpg'

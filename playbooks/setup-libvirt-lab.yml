@@ -1,0 +1,221 @@
+---
+# setup-libvirt-lab.yml
+# Provisionne l'environnement de test libvirt local pour FOG PXE Windows 11.
+# Tourne sur localhost (machine de travail).
+# Prérequis : utilisateur dans le groupe libvirt, ansible-galaxy collection community.libvirt installée.
+#
+# Usage :
+#   ansible-playbook playbooks/setup-libvirt-lab.yml
+#   ansible-playbook playbooks/setup-libvirt-lab.yml --tags network
+#   ansible-playbook playbooks/setup-libvirt-lab.yml --tags client-pxe
+
+- name: Provision libvirt lab for FOG PXE
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # --- Réseau ---
+    lab_network_name: fog-pxe
+    lab_network_bridge: virbr-fogpxe
+    lab_network_cidr: 192.168.100.0/24
+    lab_network_gateway: 192.168.100.1
+    lab_network_netmask: 255.255.255.0
+
+    # --- VM client-pxe ---
+    client_vm_name: client-pxe
+    client_vm_ram_mb: 4096
+    client_vm_vcpus: 2
+    client_vm_disk_gb: 60
+    client_vm_disk_path: /var/lib/libvirt/images/{{ client_vm_name }}.qcow2
+    client_vm_network: "{{ lab_network_name }}"
+    client_vm_nic_model: e1000e       # Meilleur support driver FOG OS (FOS)
+    client_vm_boot_order: network,hd  # PXE en premier
+
+    # OVMF UEFI sans Secure Boot
+    # Les chemins varient selon la distro hôte
+    ovmf_loader_candidates:
+      - /usr/share/OVMF/OVMF_CODE.fd                    # Ubuntu/Debian générique
+      - /usr/share/OVMF/OVMF_CODE_4M.fd                 # Ubuntu récent
+      - /usr/share/edk2/x64/OVMF_CODE.fd                # Fedora/RHEL
+    ovmf_nvram_candidates:
+      - /usr/share/OVMF/OVMF_VARS.fd
+      - /usr/share/OVMF/OVMF_VARS_4M.fd
+      - /usr/share/edk2/x64/OVMF_VARS.fd
+    # Chemin NVRAM propre à la VM (copie modifiable)
+    client_vm_nvram_path: /var/lib/libvirt/qemu/nvram/{{ client_vm_name }}_VARS.fd
+
+  tasks:
+
+    # =========================================================
+    # PAQUETS
+    # =========================================================
+    - name: Install libvirt and UEFI packages
+      become: true
+      ansible.builtin.apt:
+        name:
+          - ovmf
+          - swtpm
+          - swtpm-tools
+          - libvirt-daemon-system
+          - qemu-kvm
+          - virtinst
+        state: present
+        update_cache: true
+      tags: [packages, network, client-pxe]
+
+    - name: Ensure libvirtd is running
+      become: true
+      ansible.builtin.service:
+        name: libvirtd
+        state: started
+        enabled: true
+      tags: [packages, network, client-pxe]
+
+    # =========================================================
+    # RÉSEAU fog-pxe
+    # =========================================================
+    - name: Check if network {{ lab_network_name }} exists
+      community.libvirt.virt_net:
+        command: list_nets
+      register: existing_nets
+      tags: [network]
+
+    - name: Define network {{ lab_network_name }} (NAT, no DHCP)
+      community.libvirt.virt_net:
+        command: define
+        name: "{{ lab_network_name }}"
+        xml: |
+          <network>
+            <name>{{ lab_network_name }}</name>
+            <forward mode='nat'>
+              <nat>
+                <port start='1024' end='65535'/>
+              </nat>
+            </forward>
+            <bridge name='{{ lab_network_bridge }}' stp='on' delay='0'/>
+            <ip address='{{ lab_network_gateway }}' netmask='{{ lab_network_netmask }}'>
+              <!-- Pas de bloc <dhcp> : c'est FOG qui gère le DHCP -->
+            </ip>
+          </network>
+      when: lab_network_name not in existing_nets.list_nets
+      tags: [network]
+
+    - name: Start network {{ lab_network_name }}
+      community.libvirt.virt_net:
+        name: "{{ lab_network_name }}"
+        state: active
+      tags: [network]
+
+    - name: Autostart network {{ lab_network_name }}
+      community.libvirt.virt_net:
+        name: "{{ lab_network_name }}"
+        autostart: true
+      tags: [network]
+
+    # =========================================================
+    # VM client-pxe
+    # =========================================================
+    - name: Gather existing VMs
+      community.libvirt.virt:
+        command: list_vms
+      register: existing_vms
+      tags: [client-pxe]
+
+    # --- Résolution du chemin OVMF disponible sur la machine hôte ---
+    - name: Find available OVMF loader
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ ovmf_loader_candidates }}"
+      register: ovmf_loader_stat
+      tags: [client-pxe]
+
+    - name: Set ovmf_loader fact
+      ansible.builtin.set_fact:
+        ovmf_loader: "{{ (ovmf_loader_stat.results | selectattr('stat.exists') | first).item }}"
+      tags: [client-pxe]
+
+    - name: Find available OVMF NVRAM template
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ ovmf_nvram_candidates }}"
+      register: ovmf_nvram_stat
+      tags: [client-pxe]
+
+    - name: Set ovmf_nvram_template fact
+      ansible.builtin.set_fact:
+        ovmf_nvram_template: "{{ (ovmf_nvram_stat.results | selectattr('stat.exists') | first).item }}"
+      tags: [client-pxe]
+
+    # --- Disque ---
+    - name: Create disk image for {{ client_vm_name }} ({{ client_vm_disk_gb }} Go)
+      ansible.builtin.command:
+        cmd: >
+          qemu-img create -f qcow2
+          {{ client_vm_disk_path }}
+          {{ client_vm_disk_gb }}G
+        creates: "{{ client_vm_disk_path }}"  # idempotent : ne crée que si absent
+      become: true
+      tags: [client-pxe]
+
+    # --- NVRAM OVMF (copie modifiable par VM) ---
+    - name: Copy OVMF NVRAM template for {{ client_vm_name }}
+      ansible.builtin.copy:
+        src: "{{ ovmf_nvram_template }}"
+        dest: "{{ client_vm_nvram_path }}"
+        remote_src: true
+        force: false   # ne pas écraser si la VM a déjà booté une fois
+        owner: root
+        group: root
+        mode: '0600'
+      become: true
+      tags: [client-pxe]
+
+    # --- Définition de la VM via virt-install ---
+    # On utilise shell + virt-install car community.libvirt.virt (define via XML)
+    # est plus verbeux et fragile pour les options UEFI/NVRAM.
+    # virt-install --print-xml + virsh define garantit l'idempotence.
+    - name: Create VM {{ client_vm_name }} via virt-install
+      ansible.builtin.shell:
+        cmd: |
+          virt-install \
+            --name {{ client_vm_name }} \
+            --memory {{ client_vm_ram_mb }} \
+            --vcpus {{ client_vm_vcpus }} \
+            --disk path={{ client_vm_disk_path }},bus=sata,size={{ client_vm_disk_gb }} \
+            --network network={{ client_vm_network }},model={{ client_vm_nic_model }} \
+            --boot uefi,bootmenu.enable=on,bios.useserial=on \
+            --loader {{ ovmf_loader }} \
+            --nvram {{ client_vm_nvram_path }} \
+            --boot {{ client_vm_boot_order }} \
+            --os-variant win11 \
+            --noautoconsole \
+            --noreboot \
+            --import \
+            --print-xml | virsh define /dev/stdin
+      become: true
+      when: client_vm_name not in existing_vms.list_vms
+      tags: [client-pxe]
+
+    # La VM est définie mais non démarrée.
+    # On la boot manuellement quand FOG est prêt : virsh start client-pxe
+    - name: Ensure {{ client_vm_name }} is NOT running (boot manuel)
+      community.libvirt.virt:
+        name: "{{ client_vm_name }}"
+        state: shutdown
+      ignore_errors: true   # La VM peut déjà être arrêtée (état normal attendu)
+      tags: [client-pxe]
+
+    # =========================================================
+    # RÉSUMÉ
+    # =========================================================
+    - name: Display lab summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Lab FOG PXE pret ==="
+          - "Reseau : {{ lab_network_name }} ({{ lab_network_cidr }}) — NAT, DHCP desactive"
+          - "Gateway libvirt : {{ lab_network_gateway }}"
+          - "VM client-pxe : definie, arretee — boot manuel apres setup FOG"
+          - "Demarrer la VM : virsh start {{ client_vm_name }}"
+          - "Console VM     : virt-viewer {{ client_vm_name }}"
+      tags: [network, client-pxe]

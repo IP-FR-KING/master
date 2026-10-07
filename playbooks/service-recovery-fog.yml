@@ -1,0 +1,46 @@
+---
+# Service recovery pour srv-fog (FOG PXE)
+# Usage : ansible-playbook -i inventory/hosts.yml playbooks/service-recovery-fog.yml --ask-vault-pass
+
+- name: Service recovery — FOG PXE
+  hosts: fog_servers
+  become: true
+  tasks:
+    - name: Ensure FOG core services are running
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - apache2
+        - tftpd-hpa
+        - nfs-kernel-server
+        - mariadb
+        - isc-dhcp-server
+      register: svc_results
+
+    - name: Ensure FOG application services are running
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - FOGMulticastManager
+        - FOGImageReplicator
+        - FOGScheduler
+        - FOGSnapinReplicator
+      register: fog_svc_results
+
+    - name: Report core service status
+      ansible.builtin.debug:
+        msg: "{{ item.item }} — {{ item.state | default('checked') }}"
+      loop: "{{ svc_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Report FOG service status
+      ansible.builtin.debug:
+        msg: "{{ item.item }} — {{ item.state | default('checked') }}"
+      loop: "{{ fog_svc_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"

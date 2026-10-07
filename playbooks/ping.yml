@@ -1,0 +1,10 @@
+---
+# Test de connectivité FOG
+# Usage : ansible-playbook -i inventory/hosts.yml playbooks/ping.yml --ask-vault-pass
+
+- name: Ping FOG server
+  hosts: fog_servers
+  gather_facts: false
+  tasks:
+    - name: Test SSH connectivity
+      ansible.builtin.ping:

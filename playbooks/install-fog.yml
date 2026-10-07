@@ -1,0 +1,135 @@
+---
+# Installation automatisée de FOG Project
+# Usage : ansible-playbook -i inventory/hosts.yml playbooks/install-fog.yml --ask-vault-pass
+
+- name: Install FOG Project
+  hosts: fog_servers
+  become: true
+  vars:
+    fog_mysql_password: "{{ vault_fog_mysql_password }}"
+    fog_install_dir: /opt/fogproject
+
+  tasks:
+    - name: Install prerequisites
+      ansible.builtin.apt:
+        name:
+          - git
+          - curl
+          - wget
+          - ca-certificates
+          - nfs-common
+        state: present
+        update_cache: true
+
+    - name: Check if libcurl4 is satisfiable (Ubuntu 24.04+ uses libcurl4t64)
+      ansible.builtin.shell:
+        cmd: dpkg -l libcurl4 2>/dev/null | grep -q '^ii'
+      register: libcurl4_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install equivs for dummy package creation
+      ansible.builtin.apt:
+        name: equivs
+        state: present
+      when: libcurl4_check.rc != 0
+
+    - name: Create libcurl4 equivs control file
+      ansible.builtin.copy:
+        dest: /tmp/libcurl4-equivs
+        content: |
+          Section: libs
+          Priority: optional
+          Standards-Version: 4.6.2
+          Package: libcurl4
+          Version: 99.0.0-equivs
+          Depends: libcurl4t64
+          Description: Transitional dummy package for libcurl4 -> libcurl4t64
+        mode: "0644"
+      when: libcurl4_check.rc != 0
+
+    - name: Build and install libcurl4 dummy package
+      ansible.builtin.shell:
+        cmd: cd /tmp && equivs-build libcurl4-equivs && dpkg -i libcurl4_99.0.0-equivs_all.deb
+      when: libcurl4_check.rc != 0
+
+    - name: Clone FOG repository (shallow)
+      ansible.builtin.git:
+        repo: https://github.com/FOGProject/fogproject.git
+        dest: "{{ fog_install_dir }}"
+        version: "{{ fog_version }}"
+        depth: 1
+        force: true
+
+    - name: Create /opt/fog directory
+      ansible.builtin.file:
+        path: /opt/fog
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy fogsettings
+      ansible.builtin.template:
+        src: templates/fogsettings.j2
+        dest: /opt/fog/.fogsettings
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Run FOG installer (non-interactive)
+      ansible.builtin.shell:
+        cmd: cd {{ fog_install_dir }}/bin && bash installfog.sh -Y
+        creates: /var/www/html/fog/index.php
+      register: fog_install
+      timeout: 600
+
+    - name: Display FOG install result
+      ansible.builtin.debug:
+        msg: "{{ fog_install.stdout_lines[-20:] }}"
+      when: fog_install.changed
+
+    - name: Verify ipxe.efi exists in TFTP root
+      ansible.builtin.stat:
+        path: /tftpboot/ipxe.efi
+      register: ipxe_efi
+      when: fog_install.changed
+
+    - name: Fail if ipxe.efi is missing
+      ansible.builtin.fail:
+        msg: "ipxe.efi not found in /tftpboot/ — UEFI PXE boot will not work"
+      when: fog_install.changed and not ipxe_efi.stat.exists
+
+    - name: Deploy DHCP config for PXE
+      ansible.builtin.template:
+        src: templates/dhcpd.conf.j2
+        dest: /etc/dhcp/dhcpd.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart isc-dhcp-server
+
+    - name: Configure DHCP interface
+      ansible.builtin.lineinfile:
+        path: /etc/default/isc-dhcp-server
+        regexp: '^INTERFACESv4='
+        line: 'INTERFACESv4="{{ fog_interface }}"'
+      notify: Restart isc-dhcp-server
+
+    - name: Ensure all FOG services are started
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - apache2
+        - mariadb
+        - tftpd-hpa
+        - nfs-kernel-server
+        - isc-dhcp-server
+
+  handlers:
+    - name: Restart isc-dhcp-server
+      ansible.builtin.systemd:
+        name: isc-dhcp-server
+        state: restarted
