@@ -1,8 +1,48 @@
 # Premier essai du master Windows 11 sur VM locale
 
 Version candidate : vérifiée statiquement dans le cloud, à valider sur Windows.
-Base retenue en attendant confirmation : Windows 11 Pro x64 français, AZERTY,
-Firefox, 7-Zip, Notepad++, mises à jour et fond d'écran Windows par défaut.
+Windows 11 Pro confirmé, français/AZERTY. La nouvelle liste d’applications reste
+à préciser ; ne pas lancer la personnalisation actuelle avant son adaptation.
+
+## Création de la VM sur le PC Linux (libvirt/KVM)
+
+Le script `scripts/create_reference_vm.py` prépare Windows 11 Pro : 8 Go de RAM,
+2 vCPU, disque neuf de 80 Go, UEFI Secure Boot et TPM 2.0. Le cloud ne crée pas
+la VM. L’hyperviseur local reste à confirmer ; ces commandes sont pour Linux.
+
+Installer les prérequis sur un PC Debian/Ubuntu avec virtualisation matérielle :
+
+```bash
+sudo apt install qemu-kvm libvirt-daemon-system virtinst virt-viewer ovmf swtpm swtpm-tools
+virsh -c qemu:///system list --all
+virsh -c qemu:///system net-info default
+```
+
+Le réseau NAT `default` doit être actif. S’il existe mais est arrêté, le démarrer
+avec `virsh -c qemu:///system net-start default`. Si le réseau est absent, ne pas
+utiliser le réseau FOG sans DHCP à sa place ; faire configurer le réseau NAT local.
+Placer l’ISO officielle Windows 11 x64 dans un chemin lisible par libvirt,
+par exemple `/var/lib/libvirt/images/Windows11.iso`. Le script ne télécharge pas
+l’ISO et ne fournit pas de licence. L’édition Pro se choisit dans l’installateur.
+
+Afficher d’abord la commande (aucune VM ni disque créés) :
+
+```bash
+python3 scripts/create_reference_vm.py --iso /var/lib/libvirt/images/Windows11.iso
+```
+
+Créer et démarrer l’installation sur le PC :
+
+```bash
+python3 scripts/create_reference_vm.py --iso /var/lib/libvirt/images/Windows11.iso --create
+virt-viewer --connect qemu:///system win11-ref
+```
+
+Une VM `win11-ref` ou un disque de même chemin existants bloquent la création.
+Pour une autre VM, fournir à la fois `--name` et `--disk` avec des valeurs neuves.
+Le script ne supprime rien après une erreur ; examiner tout résultat partiel
+avant une nouvelle tentative. L’installation Windows reste manuelle, sans
+fichier de partitionnement automatique. Les snapshots et l’OOBE restent à tester.
 
 ## 1. Préparer la VM
 
@@ -70,6 +110,9 @@ win_custom_wallpaper_enabled: false
 Administrateur. Ne pas mettre de secret dans ce fichier de variables.
 
 ## 3. Personnaliser et vérifier
+
+**En attente de la nouvelle liste d’applications.** Le playbook actuel installe
+encore Firefox, 7-Zip et Notepad++ ; attendre son adaptation avant de le lancer.
 
 Les commandes suivantes s'exécutent uniquement sur le PC et ciblent `win11-ref`.
 

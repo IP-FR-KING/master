@@ -61,3 +61,14 @@ Prochaine étape : exécuter le premier essai sur une VM dédiée et rapporter l
 commit, l'hyperviseur, le build Windows et les résultats. Le modèle d'installation
 automatique reste historique (réseau de lab, effacement disque 0) et n'est pas
 le chemin recommandé pour ce premier essai.
+
+## Précisions pour le prochain essai
+
+- Windows 11 Pro confirmé par l’utilisateur. Build et ISO non fournis.
+- L’utilisateur demande de préparer la création de la VM ; script local
+  `scripts/create_reference_vm.py` fourni pour libvirt/KVM, hyperviseur à confirmer.
+- L’utilisateur souhaite une autre liste d’applications : liste en attente ;
+  ne pas exécuter le playbook de personnalisation actuel avant adaptation.
+- Script testé en aperçu et pour le refus d’un disque existant. Cinq tests de
+  régression passent, ainsi que le contrôle des 20 fichiers du projet.
+- Aucune VM créée dans le cloud, aucun démarrage Windows vérifié.
