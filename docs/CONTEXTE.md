@@ -36,3 +36,28 @@ Ce sont des observations historiques, pas une preuve de l'état actuel.
 
 Vérifications statiques uniquement : parsing YAML, templates Jinja2 rendus avec
 des valeurs fictives et parsing XML. Aucun playbook ni test Windows exécuté.
+
+## Candidate pour le premier essai VM
+
+Préparation demandée pour un test local ultérieur. Base provisoire : Windows 11
+Pro x64 français/AZERTY, mises à jour, Firefox, 7-Zip et Notepad++.
+Hyperviseur et build Windows à confirmer par l'utilisateur.
+
+- Procédure : `docs/PREMIER-ESSAI-VM.md`, installation manuelle puis
+  personnalisation, snapshot, Sysprep et test OOBE sur un clone à froid.
+- Contournements historiques retirés du playbook Sysprep : aucune suppression de
+  spopk.dll, aucun remplacement d'ActionFiles, aucun effacement des journaux ou
+  du marqueur d'échec Sysprep.
+- Confirmation explicite requise pour personnalisation et généralisation ;
+  Sysprep vérifie les redémarrages en attente et les échecs antérieurs.
+- Compte post-Sysprep dédié : MasterAdmin ; secrets définis seulement sur le PC.
+- Rendu XML des identifiants échappé ; chemin Chocolatey corrigé.
+- Inventaire WinRM passé à NTLM avec chiffrement des messages ; procédure
+  locale de préparation et limitation du pare-feu au contrôleur.
+- Validation cloud : 20 fichiers YAML/Jinja2/XML et 2 tests de régression réussis.
+  Aucun playbook exécuté, aucun test Windows/FOG effectué, aucune image créée.
+
+Prochaine étape : exécuter le premier essai sur une VM dédiée et rapporter le
+commit, l'hyperviseur, le build Windows et les résultats. Le modèle d'installation
+automatique reste historique (réseau de lab, effacement disque 0) et n'est pas
+le chemin recommandé pour ce premier essai.

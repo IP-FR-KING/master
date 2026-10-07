@@ -93,13 +93,13 @@
           <LocalAccount wcm:action="add">
             <Password>
               <!-- vault_win_local_password — défini dans vault.yml, jamais en clair dans le repo -->
-              <Value>{{ vault_win_local_password }}</Value>
+              <Value>{{ vault_win_local_password | e }}</Value>
               <PlainText>true</PlainText>
             </Password>
             <Description>Compte administrateur local</Description>
-            <DisplayName>{{ win_local_admin }}</DisplayName>
+            <DisplayName>{{ win_local_admin | e }}</DisplayName>
             <Group>Administrators</Group>
-            <Name>{{ win_local_admin }}</Name>
+            <Name>{{ win_local_admin | e }}</Name>
           </LocalAccount>
         </LocalAccounts>
       </UserAccounts>
@@ -107,12 +107,12 @@
       <!-- Connexion automatique au premier démarrage (1 fois) pour appliquer les personnalisations -->
       <AutoLogon>
         <Password>
-          <Value>{{ vault_win_local_password }}</Value>
+          <Value>{{ vault_win_local_password | e }}</Value>
           <PlainText>true</PlainText>
         </Password>
         <Enabled>true</Enabled>
         <LogonCount>1</LogonCount>
-        <Username>{{ win_local_admin }}</Username>
+        <Username>{{ win_local_admin | e }}</Username>
       </AutoLogon>
 
       <!-- Commandes exécutées lors de la première connexion automatique -->

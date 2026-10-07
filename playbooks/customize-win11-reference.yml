@@ -14,6 +14,13 @@
 
   tasks:
 
+    - name: "Préconditions | Confirmer la VM de référence"
+      ansible.builtin.assert:
+        that:
+          - master_prepare_confirm | default(false) | bool
+          - not ansible_check_mode
+        fail_msg: "Créer un snapshot et cibler uniquement la VM de référence, puis passer -e master_prepare_confirm=true."
+
     # -------------------------------------------------------------------------
     # 1. Mises à jour Windows
     # -------------------------------------------------------------------------
@@ -40,7 +47,7 @@
 
     - name: "Choco | Vérifier si Chocolatey est déjà installé"
       ansible.windows.win_stat:
-        path: C:\ProgramData\chocolatey\choco.exe
+        path: C:\ProgramData\chocolatey\bin\choco.exe
       register: choco_stat
 
     - name: "Choco | Installer Chocolatey"
@@ -139,7 +146,6 @@
         src: C:\Program Files\Mozilla Firefox\firefox.exe
         dest: C:\Users\Public\Desktop\Firefox.lnk
         state: present
-      when: firefox_stat.stat.exists or not firefox_stat.stat.exists  # toujours, après install
 
     - name: "Shortcuts | Raccourci 7-Zip sur le bureau public"
       community.windows.win_shortcut:

@@ -10,6 +10,7 @@ restent sur le PC et sont testés par l'utilisateur.
 - [Contexte et prochaines étapes](docs/CONTEXTE.md)
 - [Configurer Codex Cloud et travailler sur iPhone](docs/IPHONE-CLOUD.md)
 - [Récupérer les changements et tester sur PC](docs/TESTS-PC.md)
+- [Premier essai du master sur VM locale](docs/PREMIER-ESSAI-VM.md)
 - [Références historiques](docs/references/)
 
 ## Vérifications disponibles sans matériel

@@ -11,7 +11,7 @@
     - Partitionnement UEFI automatique (EFI 300Mo + MSR 128Mo + Windows reste)
     - Edition : Windows 11 Pro (clé générique KMS lab)
     - Locale française + clavier AZERTY
-    - Compte {{ vault_winrm_user }} / mot de passe vault créé automatiquement
+    - Compte {{ vault_winrm_user | e }} / mot de passe vault créé automatiquement
     - IP statique {{ win_reference_ip }} après installation (pas de DHCP requis)
     - WinRM HTTP activé sur le port 5985 (Ansible)
 -->
@@ -204,13 +204,13 @@
         <LocalAccounts>
           <LocalAccount wcm:action="add">
             <Password>
-              <Value>{{ vault_winrm_password }}</Value>
+              <Value>{{ vault_winrm_password | e }}</Value>
               <PlainText>true</PlainText>
             </Password>
             <Description>Compte WinRM Ansible</Description>
-            <DisplayName>{{ vault_winrm_user }}</DisplayName>
+            <DisplayName>{{ vault_winrm_user | e }}</DisplayName>
             <Group>Administrators</Group>
-            <Name>{{ vault_winrm_user }}</Name>
+            <Name>{{ vault_winrm_user | e }}</Name>
           </LocalAccount>
         </LocalAccounts>
       </UserAccounts>
@@ -218,12 +218,12 @@
       <!-- Connexion automatique unique pour exécuter les FirstLogonCommands -->
       <AutoLogon>
         <Password>
-          <Value>{{ vault_winrm_password }}</Value>
+          <Value>{{ vault_winrm_password | e }}</Value>
           <PlainText>true</PlainText>
         </Password>
         <Enabled>true</Enabled>
         <LogonCount>1</LogonCount>
-        <Username>{{ vault_winrm_user }}</Username>
+        <Username>{{ vault_winrm_user | e }}</Username>
       </AutoLogon>
 
       <!-- Configuration WinRM + IP statique exécutée au premier démarrage -->

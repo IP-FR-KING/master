@@ -31,7 +31,7 @@ win_pxe_vm_name: win11-pxe   # VM client de test déploiement PXE
 win_reference_ip: 192.168.100.50
 
 # Compte local créé par unattend.xml lors du déploiement FOG (clients)
-win_local_admin: Administrateur
+win_local_admin: MasterAdmin
 
 # Fuseau horaire et locale France
 win_timezone: Romance Standard Time
