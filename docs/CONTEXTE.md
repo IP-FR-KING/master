@@ -25,9 +25,16 @@ Non vérifié lors de cet import. Les documents précédents décrivent un lab F
 des essais Sysprep et un problème de configuration/démarrage sur SSD externe.
 Ce sont des observations historiques, pas une preuve de l'état actuel.
 
+## Accès cloud configuré
+
+Environnement **Master Win11** créé et publié le 7 octobre 2026 dans ChatGPT.
+Publication confirmée dans l’interface web. Dépendances Python installées et
+contrôles statiques réussis sur les 20 fichiers dans le cloud. Aucun secret ni
+accès au lab nécessaire. Sur iPhone : **Codex > Cloud > Master Win11**.
+
 ## Prochain travail
 
-1. Configurer et publier l'environnement Codex Cloud avec ce dépôt.
+1. Depuis l'iPhone, ouvrir Codex > Cloud > Master Win11 pour continuer le projet.
 2. Reprendre la préparation du master selon la priorité donnée par l'utilisateur.
 3. Avant un essai, relire la procédure concernée et les éventuels journaux récents.
 4. Reporter les résultats PC dans ce fichier ou dans une note de test dédiée.
